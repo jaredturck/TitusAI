@@ -10,7 +10,7 @@ BATCH_SIZE = 10
 WEIGHTS_FILE = 'weights/shakespeare_model.pth'
 MAX_SAMPLES = 1000
 TARGET_LOSS = 0.01
-USE_ALL_SAMPLES = False
+USE_ALL_SAMPLES = True
 
 class ShakespeareDataset(Dataset):
     def __init__(self, max_length=512):
@@ -52,6 +52,8 @@ class ShakespeareDataset(Dataset):
 
                 if not USE_ALL_SAMPLES and len(self.training_data) >= MAX_SAMPLES:
                     break
+        
+        print(f'[+] Loaded {len(self.training_data)} training samples')
 
 class ShakespeareModel(Module):
     def __init__(self):

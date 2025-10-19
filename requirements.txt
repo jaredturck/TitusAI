@@ -1,0 +1,3 @@
+torch
+beautifulsoup4
+transformers

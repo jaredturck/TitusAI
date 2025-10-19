@@ -55,7 +55,7 @@ class ShakespeareDataset(Dataset):
         
         print(f'[+] Loaded {len(self.training_data)} training samples')
 
-class ShakespeareModel(Module):
+class TitusModel(Module):
     def __init__(self):
         super().__init__()
         self.dataset = ShakespeareDataset()
@@ -67,6 +67,10 @@ class ShakespeareModel(Module):
         self.max_length = 512
         self.max_epochs = 10000
         self.context = torch.empty(1, 0, dtype=torch.long, device=DEVICE)
+        self.sqrt_dmodel = math.sqrt(self.d_model)
+
+        self.register_buffer('pos_arange', torch.arange(self.max_length, device=DEVICE))
+        self.register_buffer('full_causal_mask', torch.triu(torch.ones(self.max_length, self.max_length, dtype=torch.bool, device=DEVICE), diagonal=1))
 
         self.embeddings = nn.Embedding(num_embeddings=self.embedding_size, embedding_dim=self.d_model)
         self.pos_emb = nn.Embedding(self.max_length, self.d_model)
@@ -85,21 +89,20 @@ class ShakespeareModel(Module):
     
     def forward(self, src, trg):
 
-        sqrt_dmodel = math.sqrt(self.d_model)
-        
+        src_B, src_T = src.size()
+        trg_B, trg_T = trg.size()
+
+        src_pos = self.pos_arange[:src_T].unsqueeze(0).expand(src_B, src_T)
+        trg_pos = self.pos_arange[:trg_T].unsqueeze(0).expand(trg_B, trg_T)
+        mask = self.full_causal_mask[:trg_T, :trg_T]
+
         src_emb = self.em_dropout(
-            self.embeddings(src) * sqrt_dmodel + self.pos_emb(
-                torch.arange(src.size(1), device=DEVICE).unsqueeze(0).expand(*src.size())
-            )
+            self.embeddings(src) * self.sqrt_dmodel + self.pos_emb(src_pos)
         )
 
         trg_emb = self.em_dropout(
-            self.embeddings(trg) * sqrt_dmodel + self.pos_emb(
-                torch.arange(trg.size(1), device=DEVICE).unsqueeze(0).expand(*trg.size())
-            )
+            self.embeddings(trg) * self.sqrt_dmodel + self.pos_emb(trg_pos)
         )
-
-        mask = torch.triu(torch.ones(trg_emb.size(1), trg_emb.size(1), device=DEVICE, dtype=torch.bool), diagonal=1)
 
         memory = self.encoder(src_emb, src_key_padding_mask=(src == 0))
         output = self.decoder(trg_emb, memory, tgt_mask=mask, tgt_key_padding_mask=(trg == 0), memory_key_padding_mask=(src == 0))
@@ -194,14 +197,14 @@ class ShakespeareModel(Module):
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == 'train':
         try:
-            model = ShakespeareModel().to(DEVICE)
+            model = TitusModel().to(DEVICE)
             model.load_weights()
             model.train()
             
         except KeyboardInterrupt:
             model.save_weights()
     else:
-        model = ShakespeareModel().to(DEVICE)
+        model = TitusModel().to(DEVICE)
         model.load_weights()
         while True:
             text = input('> ')

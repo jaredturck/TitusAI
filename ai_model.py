@@ -10,7 +10,7 @@ BATCH_SIZE = 10
 WEIGHTS_FILE = 'weights/shakespeare_model.pth'
 MAX_SAMPLES = 1000
 TARGET_LOSS = 0.01
-USE_ALL_SAMPLES = True
+USE_ALL_SAMPLES = False
 
 class ShakespeareDataset(Dataset):
     def __init__(self, max_length=512):
@@ -126,7 +126,7 @@ class TitusModel(Module):
         optimizer = torch.optim.AdamW(self.parameters(), lr=1e-4)
         loss_func = nn.CrossEntropyLoss(ignore_index=0)
 
-        print('[+] Starting training')
+        print(f'[+] Starting training, d_model={self.d_model}, nhead={self.nhead}, dim_feedforward={self.dim_feedforward}, batch_size={BATCH_SIZE}')
         for epoch in range(self.max_epochs):
             total_loss = 0.0
             start = time.time()

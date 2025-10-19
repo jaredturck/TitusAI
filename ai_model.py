@@ -1,9 +1,12 @@
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 from torch.nn import Module
 from torch.nn.utils.rnn import pad_sequence
 import torch.nn as nn
-import csv
+import csv, torch, math
 from transformers import AutoTokenizer
+
+DEVICE = 'cuda'
+BATCH_SIZE = 12
 
 class ShakespeareDataset(Dataset):
     def __init__(self, max_length=512):
@@ -36,10 +39,17 @@ class ShakespearModel(Module):
     def __init__(self):
         super().__init__()
         self.dataset = ShakespeareDataset()
-        self.d_model = 512
-        self.nhead = self.d_model // 4
+        self.d_model = 128
+        self.nhead = self.d_model // 64
         self.dim_feedforward = self.d_model * 4
         self.dropout = 0.1
+        self.embedding_size = 50257
+        self.max_length = 512
+        self.max_epochs = 10000
+
+        self.embeddings = nn.Embedding(num_embeddings=self.embedding_size, embedding_dim=self.d_model)
+        self.pos_emb = nn.Embedding(self.max_length, self.d_model)
+        self.em_dropout = nn.Dropout(self.dropout)
 
         self.encoder = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(d_model=self.d_model, nhead=self.nhead, dim_feedforward=self.dim_feedforward, dropout=self.dropout, batch_first=True),
@@ -50,11 +60,56 @@ class ShakespearModel(Module):
             num_layers=6
         )
 
+        self.out_proj = nn.Linear(self.d_model, self.embedding_size)
+    
+    def forward(self, src, trg):
+
+        sqrt_dmodel = math.sqrt(self.d_model)
+        
+        src_emb = self.em_dropout(
+            self.embeddings(src) * sqrt_dmodel + self.pos_emb(
+                torch.arange(src.size(1), device=DEVICE).unsqueeze(0).expand(*src.size())
+            )
+        )
+
+        trg_emb = self.em_dropout(
+            self.embeddings(trg) * sqrt_dmodel + self.pos_emb(
+                torch.arange(trg.size(1), device=DEVICE).unsqueeze(0).expand(*trg.size())
+            )
+        )
+
+        mask = torch.triu(torch.ones(trg_emb.size(1), trg_emb.size(1), device=DEVICE, dtype=torch.bool), diagonal=1)
+
+        memory = self.encoder(src_emb, src_key_padding_mask=(src == 0))
+        output = self.decoder(trg_emb, memory, tgt_mask=mask, tgt_key_padding_mask=(trg == 0), memory_key_padding_mask=(src == 0))
+        logits = self.out_proj(output)
+
+        return logits
+
     def train(self):
         self.dataset.read_data()
+        self.dataloader = DataLoader(self.dataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn=self.dataset.collate_fn)
 
+        optimizer = torch.optim.AdamW(self.parameters(), lr=1e-4)
+        loss_func = nn.CrossEntropyLoss(ignore_index=0)
 
+        print('[+] Starting training')
+        for epoch in range(self.max_epochs):
+            total_loss = 0.0
+            for src, trg in self.dataloader:
+                src = src.to(DEVICE)
+                trg = trg.to(DEVICE)
+
+                optimizer.zero_grad()
+                output = self.forward(src, trg[:, :-1])
+                loss = loss_func(output.reshape(-1, output.size(-1)), trg[:, 1:].reshape(-1))
+
+                loss.backward()
+                optimizer.step()
+                total_loss += loss.item()
+
+            print(f'[+] Epoch {epoch+1} of {self.max_epochs}, avg loss: {total_loss/len(self.dataloader):.4f}')
 
 if __name__ == "__main__":
-    dataset = ShakespearModel()
+    dataset = ShakespearModel().to(DEVICE)
     dataset.train()

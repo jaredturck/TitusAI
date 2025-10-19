@@ -64,6 +64,7 @@ class ShakespeareModel(Module):
         self.embedding_size = 50257
         self.max_length = 512
         self.max_epochs = 10000
+        self.context = torch.empty(1, 0, dtype=torch.long, device=DEVICE)
 
         self.embeddings = nn.Embedding(num_embeddings=self.embedding_size, embedding_dim=self.d_model)
         self.pos_emb = nn.Embedding(self.max_length, self.d_model)
@@ -147,26 +148,35 @@ class ShakespeareModel(Module):
     @torch.no_grad()
     def predict(self, text):
 
-
+        eos_id = self.dataset.tokenizer.eos_token_id
         src = self.dataset.tokenizer(text, return_tensors='pt', truncation=True, max_length=self.max_length)['input_ids'].to(DEVICE)
+
+        # Update Context
+        if self.context.size(1) > 0 and eos_id is not None:
+            self.context = torch.cat([self.context, torch.tensor([[eos_id]], device=DEVICE)], dim=1)
+
+        self.context = torch.cat([self.context, src], dim=1)
+        if self.context.size(1) > self.max_length:
+            self.context = self.context[:, -self.max_length:]
+
+        # Pass through encoder
         src_emb = self.em_dropout(
-            self.embeddings(src) * math.sqrt(self.d_model) + self.pos_emb(
-                torch.arange(src.size(1), device=DEVICE).unsqueeze(0).expand(*src.size())
+            self.embeddings(self.context) * math.sqrt(self.d_model) + self.pos_emb(
+                torch.arange(self.context.size(1), device=DEVICE).unsqueeze(0).expand(*self.context.size())
             )
         )
 
-        memory = self.encoder(src_emb, src_key_padding_mask=(src == 0))
+        memory = self.encoder(src_emb, src_key_padding_mask=None)
         target = torch.tensor([[self.dataset.tokenizer.bos_token_id]], device=DEVICE)
 
-        eos_id = self.dataset.tokenizer.eos_token_id
-
+        # Pass through decoder
         for i in range(self.max_length):
             trg_pos = torch.arange(target.size(1), device=DEVICE).unsqueeze(0).expand(*target.size())
             trg_emb = self.em_dropout(
                 self.embeddings(target) * math.sqrt(self.d_model) + self.pos_emb(trg_pos)
             )
             trg_mask = torch.triu(torch.ones(trg_emb.size(1), trg_emb.size(1), device=DEVICE, dtype=torch.bool), diagonal=1)
-            output = self.decoder(trg_emb, memory, tgt_mask=trg_mask, tgt_key_padding_mask=(target == 0), memory_key_padding_mask=(src == 0))
+            output = self.decoder(trg_emb, memory, tgt_mask=trg_mask, tgt_key_padding_mask=(target == 0), memory_key_padding_mask=None)
             logits = self.out_proj(output)
 
             next_token = logits[:, -1, :].argmax(-1).unsqueeze(1)

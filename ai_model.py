@@ -8,6 +8,9 @@ from transformers import AutoTokenizer
 DEVICE = 'cuda'
 BATCH_SIZE = 10
 WEIGHTS_FILE = 'weights/shakespeare_model.pth'
+MAX_SAMPLES = 1000
+TARGET_LOSS = 0.01
+USE_ALL_SAMPLES = False
 
 class ShakespeareDataset(Dataset):
     def __init__(self, max_length=512):
@@ -34,9 +37,23 @@ class ShakespeareDataset(Dataset):
             for row in reader:
                 src_ids = self.tokenizer(row[0], truncation=True, max_length=self.max_length, return_tensors='pt')
                 target_ids = self.tokenizer(row[1], truncation=True, max_length=self.max_length, return_tensors='pt')
-                self.training_data.append((src_ids['input_ids'].squeeze(0), target_ids['input_ids'].squeeze(0)))
 
-class ShakespearModel(Module):
+                if self.tokenizer.eos_token_id is not None:
+                    ids = target_ids['input_ids'].squeeze(0)
+                    if ids.size(0) < self.max_length:
+                        ids = torch.cat([ids, torch.tensor([self.tokenizer.eos_token_id])], dim=0)
+                    else:
+                        ids[-1] = self.tokenizer.eos_token_id
+                    target_tensor = ids
+                else:
+                    target_tensor = target_ids['input_ids'].squeeze(0)
+
+                self.training_data.append((src_ids['input_ids'].squeeze(0), target_tensor))
+
+                if not USE_ALL_SAMPLES and len(self.training_data) >= MAX_SAMPLES:
+                    break
+
+class ShakespeareModel(Module):
     def __init__(self):
         super().__init__()
         self.dataset = ShakespeareDataset()
@@ -119,14 +136,61 @@ class ShakespearModel(Module):
                 optimizer.step()
                 total_loss += loss.item()
 
-            print(f'[+] Epoch {epoch+1} of {self.max_epochs}, avg loss: {total_loss/len(self.dataloader):.4f}, time: {time.time()-start:.2f}s')
+            avg_loss = total_loss / len(self.dataloader)
+            print(f'[+] Epoch {epoch+1} of {self.max_epochs}, avg loss: {avg_loss:.4f}, time: {time.time()-start:.2f}s')
+
+            if avg_loss < TARGET_LOSS:
+                print('[+] Target loss reached, stopping training')
+                self.save_weights()
+                return
+    
+    @torch.no_grad()
+    def predict(self, text):
+
+
+        src = self.dataset.tokenizer(text, return_tensors='pt', truncation=True, max_length=self.max_length)['input_ids'].to(DEVICE)
+        src_emb = self.em_dropout(
+            self.embeddings(src) * math.sqrt(self.d_model) + self.pos_emb(
+                torch.arange(src.size(1), device=DEVICE).unsqueeze(0).expand(*src.size())
+            )
+        )
+
+        memory = self.encoder(src_emb, src_key_padding_mask=(src == 0))
+        target = torch.tensor([[self.dataset.tokenizer.bos_token_id]], device=DEVICE)
+
+        eos_id = self.dataset.tokenizer.eos_token_id
+
+        for i in range(self.max_length):
+            trg_pos = torch.arange(target.size(1), device=DEVICE).unsqueeze(0).expand(*target.size())
+            trg_emb = self.em_dropout(
+                self.embeddings(target) * math.sqrt(self.d_model) + self.pos_emb(trg_pos)
+            )
+            trg_mask = torch.triu(torch.ones(trg_emb.size(1), trg_emb.size(1), device=DEVICE, dtype=torch.bool), diagonal=1)
+            output = self.decoder(trg_emb, memory, tgt_mask=trg_mask, tgt_key_padding_mask=(target == 0), memory_key_padding_mask=(src == 0))
+            logits = self.out_proj(output)
+
+            next_token = logits[:, -1, :].argmax(-1).unsqueeze(1)
+            target = torch.cat((target, next_token), dim=1)
+
+            if eos_id is not None and next_token.item() == eos_id:
+                break
+        
+        ids = target.squeeze(0).tolist()
+        text_output = self.dataset.tokenizer.decode(ids, skip_special_tokens=True)
+        print(text_output)
 
 if __name__ == "__main__":
-    if sys.argv[1] == 'train':
+    if len(sys.argv) > 1 and sys.argv[1] == 'train':
         try:
-            model = ShakespearModel().to(DEVICE)
+            model = ShakespeareModel().to(DEVICE)
             model.load_weights()
             model.train()
             
         except KeyboardInterrupt:
             model.save_weights()
+    else:
+        model = ShakespeareModel().to(DEVICE)
+        model.load_weights()
+        while True:
+            text = input('> ')
+            model.predict(text)

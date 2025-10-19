@@ -2,11 +2,12 @@ from torch.utils.data import Dataset, DataLoader
 from torch.nn import Module
 from torch.nn.utils.rnn import pad_sequence
 import torch.nn as nn
-import csv, torch, math
+import csv, torch, math, time, sys, os
 from transformers import AutoTokenizer
 
 DEVICE = 'cuda'
-BATCH_SIZE = 12
+BATCH_SIZE = 10
+WEIGHTS_FILE = 'weights/shakespeare_model.pth'
 
 class ShakespeareDataset(Dataset):
     def __init__(self, max_length=512):
@@ -85,6 +86,15 @@ class ShakespearModel(Module):
         logits = self.out_proj(output)
 
         return logits
+    
+    def save_weights(self):
+        torch.save(self.state_dict(), WEIGHTS_FILE)
+        print('[+] Model weights saved')
+    
+    def load_weights(self):
+        if os.path.isfile(WEIGHTS_FILE):
+            self.load_state_dict(torch.load(WEIGHTS_FILE))
+            print('[+] Model weights loaded')
 
     def train(self):
         self.dataset.read_data()
@@ -96,6 +106,7 @@ class ShakespearModel(Module):
         print('[+] Starting training')
         for epoch in range(self.max_epochs):
             total_loss = 0.0
+            start = time.time()
             for src, trg in self.dataloader:
                 src = src.to(DEVICE)
                 trg = trg.to(DEVICE)
@@ -108,8 +119,14 @@ class ShakespearModel(Module):
                 optimizer.step()
                 total_loss += loss.item()
 
-            print(f'[+] Epoch {epoch+1} of {self.max_epochs}, avg loss: {total_loss/len(self.dataloader):.4f}')
+            print(f'[+] Epoch {epoch+1} of {self.max_epochs}, avg loss: {total_loss/len(self.dataloader):.4f}, time: {time.time()-start:.2f}s')
 
 if __name__ == "__main__":
-    dataset = ShakespearModel().to(DEVICE)
-    dataset.train()
+    if sys.argv[1] == 'train':
+        try:
+            model = ShakespearModel().to(DEVICE)
+            model.load_weights()
+            model.train()
+            
+        except KeyboardInterrupt:
+            model.save_weights()

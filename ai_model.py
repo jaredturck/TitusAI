@@ -11,7 +11,6 @@ os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 DEVICE = 'cuda'
 TARGET_LOSS = 0.01
 EMBEDDING_SIZE = 5000
-USE_ALL_SAMPLES = False
 
 if platform.node() == 'Jared-PC':
     BATCH_SIZE = 14
@@ -19,12 +18,14 @@ if platform.node() == 'Jared-PC':
     WEIGHTS_FILE = 'weights/shakespeare_model.pth'
     TOKENIZER_FILE = 'weights/spu_tokenizer'
     TRAINING_DATA = 'datasets/training_data.txt'
+    USE_ALL_SAMPLES = False
 else:
-    BATCH_SIZE = 50
-    MAX_SAMPLES = 500_000
+    BATCH_SIZE = 512
+    MAX_SAMPLES = 10_000_000
     WEIGHTS_FILE = '/home/jared/TitusAI/weights/shakespeare_model.pth'
     TOKENIZER_FILE = '/home/jared/TitusAI/weights/spu_tokenizer'
     TRAINING_DATA = '/home/jared/TitusAI/datasets/training_data.txt'
+    USE_ALL_SAMPLES = True
 
 class ShakespeareDataset(Dataset):
     def __init__(self, max_length=512):
@@ -89,7 +90,7 @@ class TitusModel(Module):
         self.dim_feedforward = self.d_model * 4
         self.no_transformer_layers = 6
         self.dropout = 0.1
-        self.embedding_size = 50257
+        self.embedding_size = EMBEDDING_SIZE
         self.max_length = 512
         self.max_epochs = 10000
         self.context = torch.empty(1, 0, dtype=torch.long, device=DEVICE)

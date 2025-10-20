@@ -152,6 +152,7 @@ class TitusModel(Module):
         for epoch in range(self.max_epochs):
             total_loss = 0.0
             epoch_start = time.time()
+            save_start = time.time()
             start = time.time()
             for n, (src, trg) in enumerate(self.dataloader):
                 src = src.to(DEVICE, non_blocking=True)
@@ -169,6 +170,11 @@ class TitusModel(Module):
                 if time.time() - start > 10:
                     start = time.time()
                     print(f'[+] Epoch {epoch+1} of {self.max_epochs}, loss: {loss.item():.4f}, batch {n+1} of {len(self.dataloader)}')
+                
+                    if time.time() - save_start > 600:
+                        save_start = time.time()
+                        self.save_weights()
+                        print(f'[+] Saved weights at epoch {epoch+1}, batch {n+1}')
 
             avg_loss = total_loss / len(self.dataloader)
             print(f'[+] Epoch {epoch+1} of {self.max_epochs}, avg loss: {avg_loss:.4f}, time: {time.time()-epoch_start:.2f}s')

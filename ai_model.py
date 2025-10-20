@@ -1,9 +1,9 @@
 from torch.utils.data import Dataset, DataLoader
 from torch.nn import Module
-from tokenizers import SentencePieceUnigramTokenizer
+import sentencepiece as spm
 import torch.nn as nn
 import torch, math, time, sys, os, platform
-from transformers import PreTrainedTokenizerFast, AutoTokenizer
+from transformers import T5Tokenizer, AutoTokenizer
 
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
@@ -17,26 +17,21 @@ if platform.node() == 'Jared-PC':
     MAX_SAMPLES = 1000
     WEIGHTS_FILE = 'weights/shakespeare_model.pth'
     TOKENIZER_FILE = 'weights/spu_tokenizer'
-    TRAINING_DATA = 'datasets/training_data.txt'
+    TRAINING_DATA = ['datasets/training_data.txt', 'datasets/romantic_novels.txt']
     USE_ALL_SAMPLES = False
 else:
     BATCH_SIZE = 285
     MAX_SAMPLES = 10_000_000
     WEIGHTS_FILE = '/home/jared/TitusAI/weights/shakespeare_model.pth'
     TOKENIZER_FILE = '/home/jared/TitusAI/weights/spu_tokenizer'
-    TRAINING_DATA = '/home/jared/TitusAI/datasets/training_data.txt'
+    TRAINING_DATA = ['/home/jared/TitusAI/datasets/training_data.txt', '/home/jared/TitusAI/datasets/romantic_novels.txt']
     USE_ALL_SAMPLES = True
 
 class ShakespeareDataset(Dataset):
     def __init__(self, max_length=512):
         self.max_length = max_length
         self.embedding_size = EMBEDDING_SIZE
-
-        try:
-            self.tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_FILE)
-        except Exception as e:
-            self.train_tokenizer()
-            self.tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_FILE)
+        self.load_tokenizer()
 
     def __len__(self):
         return len(self.training_data)
@@ -48,8 +43,10 @@ class ShakespeareDataset(Dataset):
         ''' Reads training data from TXT file '''
         self.training_data = []
 
-        with open(TRAINING_DATA, 'r', encoding='utf-8') as file:
-            raw_text = file.read()
+        raw_text = ''
+        for file_path in TRAINING_DATA:
+            with open(file_path, 'r', encoding='utf-8') as file:
+                raw_text += file.read()
         
         ids = self.tokenizer(raw_text, return_tensors='pt').input_ids.squeeze(0)
         max_start = ids.size(0) - (self.max_length + 1)
@@ -64,21 +61,39 @@ class ShakespeareDataset(Dataset):
 
         print(f'[+] Loaded {len(self.training_data)} training samples')
     
+    def load_tokenizer(self):
+        ''' Loads an existing tokenizer from file '''
+
+        if not os.path.isfile(os.path.join(TOKENIZER_FILE, 'spu_tokenizer.model')):
+            input('[error] Failed to load existing tokenizer, please train a new one. Press Enter to continue...')
+            self.train_tokenizer()
+
+        # Load tokenizer
+        self.tokenizer = T5Tokenizer(
+            vocab_file=os.path.join(TOKENIZER_FILE, 'spu_tokenizer.model'),
+            bos_token='<s>', eos_token='</s>', unk_token='<unk>', pad_token='<pad>', extra_ids=0
+        )
+        print('[+] Loaded existing tokenizer')
+
     def train_tokenizer(self):
         ''' Trains a SentencePiece tokenizer on the training data '''
 
-        spu = SentencePieceUnigramTokenizer()
-        spu.train(files=['datasets/training_data.txt'], vocab_size=self.embedding_size, special_tokens=['<pad>','<s>','</s>','<unk>','<eod>'])
-        if not os.path.exists(TOKENIZER_FILE):
+        if not os.path.isdir(TOKENIZER_FILE):
             os.makedirs(TOKENIZER_FILE)
-        spu.save(os.path.join(TOKENIZER_FILE, 'tokenizer.json'))
 
-        tokenizer = PreTrainedTokenizerFast(
-            tokenizer_file=os.path.join(TOKENIZER_FILE, 'tokenizer.json'),
-            bos_token='<s>', eos_token='</s>', unk_token='<unk>', pad_token='<pad>', sep_token='<eod>'
+        spm.SentencePieceTrainer.Train(
+            input=','.join(TRAINING_DATA),
+            model_prefix=os.path.join(TOKENIZER_FILE, 'spu_tokenizer'),
+            model_type='unigram',
+            vocab_size=EMBEDDING_SIZE - 256,
+            byte_fallback=True,
+            user_defined_symbols=['<eod>'],
+            pad_id=0, pad_piece='<pad>',
+            unk_id=1, unk_piece='<unk>',
+            bos_id=2, bos_piece='<s>',
+            eos_id=3,  eos_piece='</s>',
+            normalization_rule_name='nfkc'
         )
-        tokenizer.max_length = 10 ** 12
-        tokenizer.save_pretrained(TOKENIZER_FILE)
 
 class TitusModel(Module):
     def __init__(self):
@@ -138,7 +153,6 @@ class TitusModel(Module):
             print('[+] Model weights loaded')
     
     def train(self):
-        self.dataset.train_tokenizer()
         self.dataset.read_data()
         self.dataloader = DataLoader(
             self.dataset, batch_size=BATCH_SIZE, shuffle=True, pin_memory=True, num_workers=self.dataloader_workers,

@@ -1,3 +1,4 @@
 torch
 beautifulsoup4
 transformers
+sentencepiece

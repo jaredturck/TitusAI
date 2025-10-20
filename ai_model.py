@@ -10,7 +10,7 @@ os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 # Configuration
 DEVICE = 'cuda'
 TARGET_LOSS = 0.01
-EMBEDDING_SIZE = 5000
+EMBEDDING_SIZE = 2000
 
 if platform.node() == 'Jared-PC':
     BATCH_SIZE = 14
@@ -20,7 +20,7 @@ if platform.node() == 'Jared-PC':
     TRAINING_DATA = 'datasets/training_data.txt'
     USE_ALL_SAMPLES = False
 else:
-    BATCH_SIZE = 512
+    BATCH_SIZE = 285
     MAX_SAMPLES = 10_000_000
     WEIGHTS_FILE = '/home/jared/TitusAI/weights/shakespeare_model.pth'
     TOKENIZER_FILE = '/home/jared/TitusAI/weights/spu_tokenizer'
@@ -85,7 +85,7 @@ class TitusModel(Module):
         super().__init__()
         Module.train(self, True)
         self.dataset = ShakespeareDataset()
-        self.d_model = 128
+        self.d_model = 512
         self.nhead = self.d_model // 64
         self.dim_feedforward = self.d_model * 4
         self.no_transformer_layers = 6

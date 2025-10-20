@@ -3,18 +3,18 @@ from torch.nn import Module
 import sentencepiece as spm
 import torch.nn as nn
 import torch, math, time, sys, os, platform
-from transformers import T5Tokenizer, AutoTokenizer
+from transformers import T5Tokenizer
 
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
 # Configuration
 DEVICE = 'cuda'
-TARGET_LOSS = 0.01
+TARGET_LOSS = 0.5
 EMBEDDING_SIZE = 2000
 
 if platform.node() == 'Jared-PC':
-    BATCH_SIZE = 14
-    MAX_SAMPLES = 1000
+    BATCH_SIZE = 30
+    MAX_SAMPLES = 10_000
     WEIGHTS_FILE = 'weights/shakespeare_model.pth'
     TOKENIZER_FILE = 'weights/spu_tokenizer'
     TRAINING_DATA = ['datasets/training_data.txt', 'datasets/romantic_novels.txt']
@@ -183,7 +183,8 @@ class TitusModel(Module):
 
                 if time.time() - start > 10:
                     start = time.time()
-                    print(f'[+] Epoch {epoch+1} of {self.max_epochs}, loss: {loss.item():.4f}, batch {n+1} of {len(self.dataloader)}')
+                    pcnt = (n+1) / len(self.dataloader) * 100
+                    print(f'[+] Epoch {epoch+1} of {self.max_epochs}, loss: {loss.item():.4f}, batch {n+1} of {len(self.dataloader)} ({pcnt:.1f}%)')
                 
                     if time.time() - save_start > 600:
                         save_start = time.time()

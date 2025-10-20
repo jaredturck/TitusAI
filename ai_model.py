@@ -161,6 +161,7 @@ class TitusModel(Module):
 
         optimizer = torch.optim.AdamW(self.parameters(), lr=1e-4, fused=True)
         loss_func = nn.CrossEntropyLoss()
+        prev_batch_num = 0
 
         print(f'[+] Starting training, d_model={self.d_model}, nhead={self.nhead}, dim_feedforward={self.dim_feedforward}, batch_size={BATCH_SIZE}')
         for epoch in range(self.max_epochs):
@@ -184,12 +185,15 @@ class TitusModel(Module):
                 if time.time() - start > 10:
                     start = time.time()
                     pcnt = (n+1) / len(self.dataloader) * 100
-                    print(f'[+] Epoch {epoch+1} of {self.max_epochs}, loss: {loss.item():.4f}, batch {n+1} of {len(self.dataloader)} ({pcnt:.1f}%)')
+                    tps = int((((n+1) - prev_batch_num) * BATCH_SIZE * self.max_length) / 10)
+                    print(f'[+] Epoch {epoch+1} of {self.max_epochs}, loss: {loss.item():.4f}, batch {n+1} of {len(self.dataloader)}, tps: {tps:,} ({pcnt:.1f}%)')
                 
                     if time.time() - save_start > 600:
                         save_start = time.time()
                         self.save_weights()
                         print(f'[+] Saved weights at epoch {epoch+1}, batch {n+1}')
+                    
+                    prev_batch_num = n+1
 
             avg_loss = total_loss / len(self.dataloader)
             print(f'[+] Epoch {epoch+1} of {self.max_epochs}, avg loss: {avg_loss:.4f}, time: {time.time()-epoch_start:.2f}s')

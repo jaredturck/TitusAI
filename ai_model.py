@@ -141,8 +141,9 @@ class TitusModel(Module):
         print(f'[+] Starting training, d_model={self.d_model}, nhead={self.nhead}, dim_feedforward={self.dim_feedforward}, batch_size={BATCH_SIZE}')
         for epoch in range(self.max_epochs):
             total_loss = 0.0
+            epoch_start = time.time()
             start = time.time()
-            for src, trg in self.dataloader:
+            for n, (src, trg) in enumerate(self.dataloader):
                 src = src.to(DEVICE, non_blocking=True)
                 trg = trg.to(DEVICE, non_blocking=True)
 
@@ -155,8 +156,12 @@ class TitusModel(Module):
                 optimizer.step()
                 total_loss += loss.item()
 
+                if time.time() - start > 10:
+                    start = time.time()
+                    print(f'[+] Epoch {epoch+1} of {self.max_epochs}, batch {n+1} of {len(self.dataloader)}, loss: {loss.item():.4f}')
+
             avg_loss = total_loss / len(self.dataloader)
-            print(f'[+] Epoch {epoch+1} of {self.max_epochs}, avg loss: {avg_loss:.4f}, time: {time.time()-start:.2f}s')
+            print(f'[+] Epoch {epoch+1} of {self.max_epochs}, avg loss: {avg_loss:.4f}, time: {time.time()-epoch_start:.2f}s')
 
             if avg_loss < TARGET_LOSS:
                 print('[+] Target loss reached, stopping training')

@@ -2,20 +2,29 @@ from torch.utils.data import Dataset, DataLoader
 from torch.nn import Module
 from tokenizers import SentencePieceUnigramTokenizer
 import torch.nn as nn
-import csv, torch, math, time, sys, os
+import torch, math, time, sys, os, platform
 from transformers import PreTrainedTokenizerFast, AutoTokenizer
 
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
 # Configuration
 DEVICE = 'cuda'
-BATCH_SIZE = 14
-WEIGHTS_FILE = 'weights/shakespeare_model.pth'
-TOKENIZER_FILE = 'weights/spu_tokenizer'
-MAX_SAMPLES = 1000
 TARGET_LOSS = 0.01
 EMBEDDING_SIZE = 5000
 USE_ALL_SAMPLES = False
+
+if platform.node() == 'Jared-PC':
+    BATCH_SIZE = 14
+    MAX_SAMPLES = 1000
+    WEIGHTS_FILE = 'weights/shakespeare_model.pth'
+    TOKENIZER_FILE = 'weights/spu_tokenizer'
+    TRAINING_DATA = 'datasets/training_data.txt'
+else:
+    BATCH_SIZE = 50
+    MAX_SAMPLES = 500_000
+    WEIGHTS_FILE = '/home/jared/TitusAI/weights/shakespeare_model.pth'
+    TOKENIZER_FILE = '/home/jared/TitusAI/weights/spu_tokenizer'
+    TRAINING_DATA = '/home/jared/TitusAI/datasets/training_data.txt'
 
 class ShakespeareDataset(Dataset):
     def __init__(self, max_length=512):
@@ -38,7 +47,7 @@ class ShakespeareDataset(Dataset):
         ''' Reads training data from TXT file '''
         self.training_data = []
 
-        with open('datasets/training_data.txt', 'r', encoding='utf-8') as file:
+        with open(TRAINING_DATA, 'r', encoding='utf-8') as file:
             raw_text = file.read()
         
         ids = self.tokenizer(raw_text, return_tensors='pt').input_ids.squeeze(0)
@@ -158,7 +167,7 @@ class TitusModel(Module):
 
                 if time.time() - start > 10:
                     start = time.time()
-                    print(f'[+] Epoch {epoch+1} of {self.max_epochs}, batch {n+1} of {len(self.dataloader)}, loss: {loss.item():.4f}')
+                    print(f'[+] Epoch {epoch+1} of {self.max_epochs}, loss: {loss.item():.4f}, batch {n+1} of {len(self.dataloader)}')
 
             avg_loss = total_loss / len(self.dataloader)
             print(f'[+] Epoch {epoch+1} of {self.max_epochs}, avg loss: {avg_loss:.4f}, time: {time.time()-epoch_start:.2f}s')

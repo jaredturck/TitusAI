@@ -14,7 +14,7 @@ EMBEDDING_SIZE = 2000
 
 if platform.node() == 'Jared-PC':
     BATCH_SIZE = 30
-    MAX_SAMPLES = 10_000
+    MAX_SAMPLES = 25_000
     WEIGHTS_FILE = 'weights/shakespeare_model.pth'
     TOKENIZER_FILE = 'weights/spu_tokenizer'
     TRAINING_DATA = ['datasets/training_data.txt', 'datasets/romantic_novels.txt']

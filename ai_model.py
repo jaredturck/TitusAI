@@ -1,21 +1,32 @@
 from torch.utils.data import Dataset, DataLoader
 from torch.nn import Module
-from torch.nn.utils.rnn import pad_sequence
+from tokenizers import SentencePieceUnigramTokenizer
 import torch.nn as nn
 import csv, torch, math, time, sys, os
-from transformers import AutoTokenizer
+from transformers import PreTrainedTokenizerFast, AutoTokenizer
 
+os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+
+# Configuration
 DEVICE = 'cuda'
-BATCH_SIZE = 10
+BATCH_SIZE = 14
 WEIGHTS_FILE = 'weights/shakespeare_model.pth'
+TOKENIZER_FILE = 'weights/spu_tokenizer'
 MAX_SAMPLES = 1000
 TARGET_LOSS = 0.01
+EMBEDDING_SIZE = 5000
 USE_ALL_SAMPLES = False
 
 class ShakespeareDataset(Dataset):
     def __init__(self, max_length=512):
         self.max_length = max_length
-        self.tokenizer = AutoTokenizer.from_pretrained("gpt2")
+        self.embedding_size = EMBEDDING_SIZE
+
+        try:
+            self.tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_FILE)
+        except Exception as e:
+            self.train_tokenizer()
+            self.tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_FILE)
 
     def __len__(self):
         return len(self.training_data)
@@ -23,51 +34,58 @@ class ShakespeareDataset(Dataset):
     def __getitem__(self, idx):
         return self.training_data[idx]
     
-    def collate_fn(self, batch):
-        src, trg = zip(*batch)
-        src_pad = pad_sequence(src, batch_first=True, padding_value=0)
-        trg_pad = pad_sequence(trg, batch_first=True, padding_value=0)
-        return src_pad, trg_pad
-    
     def read_data(self):
-        ''' Reads training data from CSV file '''
+        ''' Reads training data from TXT file '''
         self.training_data = []
-        with open('datasets/training_data.csv', 'r', encoding='utf-8') as file:
-            reader = csv.reader(file)
-            for row in reader:
-                src_ids = self.tokenizer(row[0], truncation=True, max_length=self.max_length, return_tensors='pt')
-                target_ids = self.tokenizer(row[1], truncation=True, max_length=self.max_length, return_tensors='pt')
 
-                if self.tokenizer.eos_token_id is not None:
-                    ids = target_ids['input_ids'].squeeze(0)
-                    if ids.size(0) < self.max_length:
-                        ids = torch.cat([ids, torch.tensor([self.tokenizer.eos_token_id])], dim=0)
-                    else:
-                        ids[-1] = self.tokenizer.eos_token_id
-                    target_tensor = ids
-                else:
-                    target_tensor = target_ids['input_ids'].squeeze(0)
-
-                self.training_data.append((src_ids['input_ids'].squeeze(0), target_tensor))
-
-                if not USE_ALL_SAMPLES and len(self.training_data) >= MAX_SAMPLES:
-                    break
+        with open('datasets/training_data.txt', 'r', encoding='utf-8') as file:
+            raw_text = file.read()
         
+        ids = self.tokenizer(raw_text, return_tensors='pt').input_ids.squeeze(0)
+        max_start = ids.size(0) - (self.max_length + 1)
+
+        for start in range(0, max_start + 1):
+            x = ids[start : start + self.max_length]
+            y = ids[start + 1 : start + self.max_length + 1]
+            self.training_data.append((x, y))
+
+            if not USE_ALL_SAMPLES and start >= MAX_SAMPLES:
+                break
+
         print(f'[+] Loaded {len(self.training_data)} training samples')
+    
+    def train_tokenizer(self):
+        ''' Trains a SentencePiece tokenizer on the training data '''
+
+        spu = SentencePieceUnigramTokenizer()
+        spu.train(files=['datasets/training_data.txt'], vocab_size=self.embedding_size, special_tokens=['<pad>','<s>','</s>','<unk>','<eod>'])
+        if not os.path.exists(TOKENIZER_FILE):
+            os.makedirs(TOKENIZER_FILE)
+        spu.save(os.path.join(TOKENIZER_FILE, 'tokenizer.json'))
+
+        tokenizer = PreTrainedTokenizerFast(
+            tokenizer_file=os.path.join(TOKENIZER_FILE, 'tokenizer.json'),
+            bos_token='<s>', eos_token='</s>', unk_token='<unk>', pad_token='<pad>', sep_token='<eod>'
+        )
+        tokenizer.max_length = 10 ** 12
+        tokenizer.save_pretrained(TOKENIZER_FILE)
 
 class TitusModel(Module):
     def __init__(self):
         super().__init__()
+        Module.train(self, True)
         self.dataset = ShakespeareDataset()
         self.d_model = 128
         self.nhead = self.d_model // 64
         self.dim_feedforward = self.d_model * 4
+        self.no_transformer_layers = 6
         self.dropout = 0.1
         self.embedding_size = 50257
         self.max_length = 512
         self.max_epochs = 10000
         self.context = torch.empty(1, 0, dtype=torch.long, device=DEVICE)
         self.sqrt_dmodel = math.sqrt(self.d_model)
+        self.dataloader_workers = max(2, os.cpu_count() // 2)
 
         self.register_buffer('pos_arange', torch.arange(self.max_length, device=DEVICE))
         self.register_buffer('full_causal_mask', torch.triu(torch.ones(self.max_length, self.max_length, dtype=torch.bool, device=DEVICE), diagonal=1))
@@ -78,35 +96,25 @@ class TitusModel(Module):
 
         self.encoder = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(d_model=self.d_model, nhead=self.nhead, dim_feedforward=self.dim_feedforward, dropout=self.dropout, batch_first=True),
-            num_layers=6
-        )
-        self.decoder = nn.TransformerDecoder(
-            nn.TransformerDecoderLayer(d_model=self.d_model, nhead=self.nhead, dim_feedforward=self.dim_feedforward, dropout=self.dropout, batch_first=True),
-            num_layers=6
+            num_layers=self.no_transformer_layers
         )
 
         self.out_proj = nn.Linear(self.d_model, self.embedding_size)
+        self.out_proj.weight = self.embeddings.weight
     
-    def forward(self, src, trg):
+    def forward(self, src):
 
         src_B, src_T = src.size()
-        trg_B, trg_T = trg.size()
+        pos = self.pos_arange[:src_T].unsqueeze(0).expand(src_B, src_T)
 
-        src_pos = self.pos_arange[:src_T].unsqueeze(0).expand(src_B, src_T)
-        trg_pos = self.pos_arange[:trg_T].unsqueeze(0).expand(trg_B, trg_T)
-        mask = self.full_causal_mask[:trg_T, :trg_T]
-
-        src_emb = self.em_dropout(
-            self.embeddings(src) * self.sqrt_dmodel + self.pos_emb(src_pos)
+        logits = self.out_proj(
+            self.encoder(
+                self.em_dropout(
+                    self.embeddings(src) * self.sqrt_dmodel + self.pos_emb(pos)
+                ),
+                mask = self.full_causal_mask[:src_T, :src_T]
+            )
         )
-
-        trg_emb = self.em_dropout(
-            self.embeddings(trg) * self.sqrt_dmodel + self.pos_emb(trg_pos)
-        )
-
-        memory = self.encoder(src_emb, src_key_padding_mask=(src == 0))
-        output = self.decoder(trg_emb, memory, tgt_mask=mask, tgt_key_padding_mask=(trg == 0), memory_key_padding_mask=(src == 0))
-        logits = self.out_proj(output)
 
         return logits
     
@@ -118,25 +126,30 @@ class TitusModel(Module):
         if os.path.isfile(WEIGHTS_FILE):
             self.load_state_dict(torch.load(WEIGHTS_FILE))
             print('[+] Model weights loaded')
-
+    
     def train(self):
+        self.dataset.train_tokenizer()
         self.dataset.read_data()
-        self.dataloader = DataLoader(self.dataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn=self.dataset.collate_fn)
+        self.dataloader = DataLoader(
+            self.dataset, batch_size=BATCH_SIZE, shuffle=True, pin_memory=True, num_workers=self.dataloader_workers,
+            persistent_workers=True, prefetch_factor=4
+        )
 
-        optimizer = torch.optim.AdamW(self.parameters(), lr=1e-4)
-        loss_func = nn.CrossEntropyLoss(ignore_index=0)
+        optimizer = torch.optim.AdamW(self.parameters(), lr=1e-4, fused=True)
+        loss_func = nn.CrossEntropyLoss()
 
         print(f'[+] Starting training, d_model={self.d_model}, nhead={self.nhead}, dim_feedforward={self.dim_feedforward}, batch_size={BATCH_SIZE}')
         for epoch in range(self.max_epochs):
             total_loss = 0.0
             start = time.time()
             for src, trg in self.dataloader:
-                src = src.to(DEVICE)
-                trg = trg.to(DEVICE)
+                src = src.to(DEVICE, non_blocking=True)
+                trg = trg.to(DEVICE, non_blocking=True)
 
                 optimizer.zero_grad()
-                output = self.forward(src, trg[:, :-1])
-                loss = loss_func(output.reshape(-1, output.size(-1)), trg[:, 1:].reshape(-1))
+                with torch.autocast(device_type=DEVICE, dtype=torch.bfloat16):
+                    output = self.forward(src)
+                    loss = loss_func(output.reshape(-1, output.size(-1)), trg.reshape(-1))
 
                 loss.backward()
                 optimizer.step()
@@ -153,46 +166,16 @@ class TitusModel(Module):
     @torch.no_grad()
     def predict(self, text):
 
-        eos_id = self.dataset.tokenizer.eos_token_id
-        src = self.dataset.tokenizer(text, return_tensors='pt', truncation=True, max_length=self.max_length)['input_ids'].to(DEVICE)
+        seq = self.dataset.tokenizer(text, return_tensors='pt')['input_ids'].to(DEVICE)
 
-        # Update Context
-        if self.context.size(1) > 0 and eos_id is not None:
-            self.context = torch.cat([self.context, torch.tensor([[eos_id]], device=DEVICE)], dim=1)
-
-        self.context = torch.cat([self.context, src], dim=1)
-        if self.context.size(1) > self.max_length:
-            self.context = self.context[:, -self.max_length:]
-
-        # Pass through encoder
-        src_emb = self.em_dropout(
-            self.embeddings(self.context) * math.sqrt(self.d_model) + self.pos_emb(
-                torch.arange(self.context.size(1), device=DEVICE).unsqueeze(0).expand(*self.context.size())
-            )
-        )
-
-        memory = self.encoder(src_emb, src_key_padding_mask=None)
-        target = torch.tensor([[self.dataset.tokenizer.bos_token_id]], device=DEVICE)
-
-        # Pass through decoder
-        for i in range(self.max_length):
-            trg_pos = torch.arange(target.size(1), device=DEVICE).unsqueeze(0).expand(*target.size())
-            trg_emb = self.em_dropout(
-                self.embeddings(target) * math.sqrt(self.d_model) + self.pos_emb(trg_pos)
-            )
-            trg_mask = torch.triu(torch.ones(trg_emb.size(1), trg_emb.size(1), device=DEVICE, dtype=torch.bool), diagonal=1)
-            output = self.decoder(trg_emb, memory, tgt_mask=trg_mask, tgt_key_padding_mask=(target == 0), memory_key_padding_mask=None)
-            logits = self.out_proj(output)
-
-            next_token = logits[:, -1, :].argmax(-1).unsqueeze(1)
-            target = torch.cat((target, next_token), dim=1)
-
-            if eos_id is not None and next_token.item() == eos_id:
-                break
+        for _ in range(self.max_length):
+            x = seq[:, -self.max_length:]
+            logits = self.forward(x)
+            next_token = logits[:, -1, :].argmax(dim=-1, keepdim=True)
+            seq = torch.cat([seq, next_token], dim=-1)
         
-        ids = target.squeeze(0).tolist()
-        text_output = self.dataset.tokenizer.decode(ids, skip_special_tokens=True)
-        print(text_output)
+        output_txt = self.dataset.tokenizer.decode(seq[0].tolist(), skip_special_tokens=True)
+        print(output_txt)
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == 'train':

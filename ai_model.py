@@ -20,7 +20,7 @@ if platform.node() == 'Jared-PC':
     TRAINING_DATA = ['datasets/training_data.txt', 'datasets/romantic_novels.txt']
     USE_ALL_SAMPLES = False
 else:
-    BATCH_SIZE = 285
+    BATCH_SIZE = 280
     MAX_SAMPLES = 10_000_000
     WEIGHTS_FILE = '/home/jared/TitusAI/weights/shakespeare_model.pth'
     TOKENIZER_FILE = '/home/jared/TitusAI/weights/spu_tokenizer'
@@ -43,13 +43,32 @@ class ShakespeareDataset(Dataset):
         ''' Reads training data from TXT file '''
         self.training_data = []
 
-        raw_text = ''
+        print('[+] Reading training data...')
+        eod_id = self.tokenizer.convert_tokens_to_ids('<eod>')
+        assert isinstance(eod_id, int) and eod_id != self.tokenizer.unk_token_id, '[error] <eod> token not found in tokenizer vocabulary'
+
+        ids = []
+        start = time.time()
         for file_path in TRAINING_DATA:
             with open(file_path, 'r', encoding='utf-8') as file:
-                raw_text += file.read()
-        
-        ids = self.tokenizer(raw_text, return_tensors='pt').input_ids.squeeze(0)
+                for row in file:
+                    row = row.strip()
+                    if row:
+                        row_ids = self.tokenizer(row, return_tensors='pt', add_special_tokens=False).input_ids.squeeze(0)
+                        ids.append(self.tokenizer.bos_token_id)
+                        ids.extend(row_ids)
+                        ids.append(self.tokenizer.eos_token_id)
+
+                        if time.time() - start > 10:
+                            start = time.time()
+                            print(f'[+] Processed {len(ids):,} tokens')
+
+                ids.append(eod_id)
+
+        print('[+] Creating x,y pairs')
+        ids = torch.tensor(ids)
         max_start = ids.size(0) - (self.max_length + 1)
+        start_time = time.time()
 
         for start in range(0, max_start + 1):
             x = ids[start : start + self.max_length]
@@ -58,6 +77,10 @@ class ShakespeareDataset(Dataset):
 
             if not USE_ALL_SAMPLES and start >= MAX_SAMPLES:
                 break
+
+            if time.time() - start_time > 10:
+                start_time = time.time()
+                print(f'[+] Processed {len(self.training_data)} pairs')
 
         print(f'[+] Loaded {len(self.training_data)} training samples')
     

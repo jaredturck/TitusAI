@@ -80,7 +80,7 @@ class ShakespeareDataset(Dataset):
 
             if time.time() - start_time > 10:
                 start_time = time.time()
-                print(f'[+] Processed {len(self.training_data)} pairs')
+                print(f'[+] Processed {len(self.training_data):,} pairs')
 
         print(f'[+] Loaded {len(self.training_data):,} training samples')
     

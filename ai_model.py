@@ -2,7 +2,7 @@ from torch.utils.data import Dataset, DataLoader
 from torch.nn import Module
 import sentencepiece as spm
 import torch.nn as nn
-import torch, math, time, sys, os, platform
+import torch, math, time, sys, os, platform, datetime
 from transformers import T5Tokenizer
 
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
@@ -15,14 +15,14 @@ EMBEDDING_SIZE = 2000
 if platform.node() == 'Jared-PC':
     BATCH_SIZE = 30
     MAX_SAMPLES = 100_000
-    WEIGHTS_FILE = 'weights/shakespeare_model.pth'
+    WEIGHTS_PATH = 'weights/'
     TOKENIZER_FILE = 'weights/spu_tokenizer'
     TRAINING_DATA = ['datasets/training_data.txt', 'datasets/romantic_novels.txt']
     USE_ALL_SAMPLES = False
 else:
     BATCH_SIZE = 280
     MAX_SAMPLES = 10_000_000
-    WEIGHTS_FILE = '/home/jared/TitusAI/weights/shakespeare_model.pth'
+    WEIGHTS_PATH = '/home/jared/TitusAI/weights/'
     TOKENIZER_FILE = '/home/jared/TitusAI/weights/spu_tokenizer'
     TRAINING_DATA = ['/home/jared/TitusAI/datasets/training_data.txt', '/home/jared/TitusAI/datasets/romantic_novels.txt']
     USE_ALL_SAMPLES = True
@@ -82,7 +82,7 @@ class ShakespeareDataset(Dataset):
                 start_time = time.time()
                 print(f'[+] Processed {len(self.training_data)} pairs')
 
-        print(f'[+] Loaded {len(self.training_data)} training samples')
+        print(f'[+] Loaded {len(self.training_data):,} training samples')
     
     def load_tokenizer(self):
         ''' Loads an existing tokenizer from file '''
@@ -134,6 +134,7 @@ class TitusModel(Module):
         self.context = torch.empty(1, 0, dtype=torch.long, device=DEVICE)
         self.sqrt_dmodel = math.sqrt(self.d_model)
         self.dataloader_workers = max(2, os.cpu_count() // 2)
+        self.optimizer = None
 
         self.register_buffer('pos_arange', torch.arange(self.max_length, device=DEVICE))
         self.register_buffer('full_causal_mask', torch.triu(torch.ones(self.max_length, self.max_length, dtype=torch.bool, device=DEVICE), diagonal=1))
@@ -167,22 +168,41 @@ class TitusModel(Module):
         return logits
     
     def save_weights(self):
-        torch.save(self.state_dict(), WEIGHTS_FILE)
+        weights_file = os.path.join(WEIGHTS_PATH, f'shakespeare_model_{datetime.datetime.now().strftime(r"%d_%b_%Y-%H_%M")}.pth')
+        torch.save({
+            'weights' : self.state_dict(),
+            'optimizer' : self.optimizer.state_dict(),
+        }, weights_file)
         print('[+] Model weights saved')
     
     def load_weights(self):
-        if os.path.isfile(WEIGHTS_FILE):
-            self.load_state_dict(torch.load(WEIGHTS_FILE))
-            print('[+] Model weights loaded')
+        weights_file = max([os.path.join(WEIGHTS_PATH, file) for file in os.listdir(WEIGHTS_PATH) if file.endswith('.pth')], key=os.path.getctime)
+
+        if os.path.isfile(weights_file):
+            weights_data = torch.load(weights_file)
+            if isinstance(weights_data, dict) and 'weights' in weights_data and 'optimizer' in weights_data:
+                self.load_state_dict(weights_data['weights'])
+                if self.optimizer and weights_data['optimizer']:
+                    self.optimizer.load_state_dict(weights_data['optimizer'])
+                    print('[+] Optimizer state loaded')
+                print(f'[+] Model weights loaded {weights_file}')
+
+            else:
+                self.load_state_dict(weights_data)
+                print(f'[+] Model weights loaded {weights_file} (optimizer state not found)')
     
     def train(self):
+        ''' Main training loop '''
+
+        self.optimizer = torch.optim.AdamW(self.parameters(), lr=1e-4, fused=True)
+        self.load_weights()
+
         self.dataset.read_data()
         self.dataloader = DataLoader(
             self.dataset, batch_size=BATCH_SIZE, shuffle=True, pin_memory=True, num_workers=self.dataloader_workers,
             persistent_workers=True, prefetch_factor=4
         )
 
-        optimizer = torch.optim.AdamW(self.parameters(), lr=1e-4, fused=True)
         loss_func = nn.CrossEntropyLoss()
         prev_batch_num = 0
 
@@ -196,13 +216,13 @@ class TitusModel(Module):
                 src = src.to(DEVICE, non_blocking=True)
                 trg = trg.to(DEVICE, non_blocking=True)
 
-                optimizer.zero_grad()
+                self.optimizer.zero_grad()
                 with torch.autocast(device_type=DEVICE, dtype=torch.bfloat16):
                     output = self.forward(src)
                     loss = loss_func(output.reshape(-1, output.size(-1)), trg.reshape(-1))
 
                 loss.backward()
-                optimizer.step()
+                self.optimizer.step()
                 total_loss += loss.item()
 
                 if time.time() - start > 10:
@@ -244,7 +264,6 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == 'train':
         try:
             model = TitusModel().to(DEVICE)
-            model.load_weights()
             model.train()
             
         except KeyboardInterrupt:

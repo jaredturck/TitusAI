@@ -1,7 +1,7 @@
-d_model = 512
+d_model = 1536
 nhead = d_model // 64
 dim_feedforward = d_model * 4
-no_transformer_layers = 6
+no_transformer_layers = d_model // 128
 embedding_size = 2000
 max_length = 512
 batch_size = 256

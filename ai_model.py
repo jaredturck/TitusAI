@@ -13,14 +13,14 @@ TARGET_LOSS = 1.3
 EMBEDDING_SIZE = 2000
 
 if platform.node() == 'Jared-PC':
-    BATCH_SIZE = 30
+    BATCH_SIZE = 1
     MAX_SAMPLES = 100_000
     WEIGHTS_PATH = 'weights/'
     TOKENIZER_FILE = 'weights/spu_tokenizer'
     TRAINING_DATA = ['datasets/training_data.txt', 'datasets/romantic_novels.txt']
     USE_ALL_SAMPLES = False
 else:
-    BATCH_SIZE = 280
+    BATCH_SIZE = 32
     MAX_SAMPLES = 10_000_000
     WEIGHTS_PATH = '/home/jared/TitusAI/weights/'
     TOKENIZER_FILE = '/home/jared/TitusAI/weights/spu_tokenizer'
@@ -123,10 +123,10 @@ class TitusModel(Module):
         super().__init__()
         Module.train(self, True)
         self.dataset = ShakespeareDataset()
-        self.d_model = 512
+        self.d_model = 1536
         self.nhead = self.d_model // 64
         self.dim_feedforward = self.d_model * 4
-        self.no_transformer_layers = 6
+        self.no_transformer_layers = self.d_model // 128
         self.dropout = 0.1
         self.embedding_size = EMBEDDING_SIZE
         self.max_length = 512
@@ -168,6 +168,13 @@ class TitusModel(Module):
         return logits
     
     def save_weights(self):
+        # Delete oldest weight file
+        files = [os.path.join(WEIGHTS_PATH, file) for file in os.listdir(WEIGHTS_PATH) if file.endswith('.pth')]
+        if len(files) > 10:
+            oldest_file = min(files, key=os.path.getctime)
+            os.remove(oldest_file)
+            print(f'[+] Deleted oldest weights file {oldest_file}')
+
         weights_file = os.path.join(WEIGHTS_PATH, f'shakespeare_model_{datetime.datetime.now().strftime(r"%d_%b_%Y-%H_%M")}.pth')
         torch.save({
             'weights' : self.state_dict(),
@@ -176,8 +183,11 @@ class TitusModel(Module):
         print('[+] Model weights saved')
     
     def load_weights(self):
-        weights_file = max([os.path.join(WEIGHTS_PATH, file) for file in os.listdir(WEIGHTS_PATH) if file.endswith('.pth')], key=os.path.getctime)
+        files = [os.path.join(WEIGHTS_PATH, file) for file in os.listdir(WEIGHTS_PATH) if file.endswith('.pth')]
+        if not files:
+            return print('[-] No weights found, starting training from scratch')
 
+        weights_file = max(files, key=os.path.getctime)
         if os.path.isfile(weights_file):
             weights_data = torch.load(weights_file)
             if isinstance(weights_data, dict) and 'weights' in weights_data and 'optimizer' in weights_data:
@@ -206,7 +216,8 @@ class TitusModel(Module):
         loss_func = nn.CrossEntropyLoss()
         prev_batch_num = 0
 
-        print(f'[+] Starting training, d_model={self.d_model}, nhead={self.nhead}, dim_feedforward={self.dim_feedforward}, batch_size={BATCH_SIZE}')
+        print(f'[+] Starting training, d_model={self.d_model}, nhead={self.nhead}, dim_feedforward={self.dim_feedforward}, '
+            f'layers={self.no_transformer_layers}, batch_size={BATCH_SIZE}')
         for epoch in range(self.max_epochs):
             total_loss = 0.0
             epoch_start = time.time()
@@ -231,7 +242,7 @@ class TitusModel(Module):
                     start = time.time()
                     print(f'[+] Epoch {epoch+1} of {self.max_epochs}, loss: {loss.item():.4f}, batch {n+1} of {len(self.dataloader)}, tps: {tps:,} ({pcnt:.1f}%)')
                 
-                    if time.time() - save_start > 600:
+                    if time.time() - save_start > 900:
                         save_start = time.time()
                         self.save_weights()
                         print(f'[+] Saved weights at epoch {epoch+1}, batch {n+1}')

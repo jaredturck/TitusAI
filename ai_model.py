@@ -50,6 +50,7 @@ class ShakespeareDataset(Dataset):
         self.embedding_size = EMBEDDING_SIZE
         self.load_tokenizer()
         self.dataset_len = None
+        self.buffer_size = 1024 * 1024 * 16  # 16 MB buffer
 
     def __len__(self):
         return self.dataset_len
@@ -72,15 +73,17 @@ class ShakespeareDataset(Dataset):
             for filename in os.listdir(folder):
                 file_path = os.path.join(folder, filename)
                 with open(file_path, 'r', encoding='utf-8') as file:
+                    
+                    doc_content = True
+                    while doc_content:
+                        doc_content = file.read(self.buffer_size)
+                        doc_ids = self.tokenizer(doc_content, return_tensors='pt', add_special_tokens=False)\
+                            .input_ids.squeeze(0).cpu().numpy().astype(np.uint32, copy=False)
+                        ids.frombytes(doc_ids.tobytes())
 
-                    doc_content = file.read()
-                    doc_ids = self.tokenizer(doc_content, return_tensors='pt', add_special_tokens=False)\
-                        .input_ids.squeeze(0).cpu().numpy().astype(np.uint32, copy=False)
-                    ids.frombytes(doc_ids.tobytes())
-
-                    if time.time() - start > 10:
-                        start = time.time()
-                        print(f'[+] Processed {len(ids):,} tokens')
+                        if time.time() - start > 10:
+                            start = time.time()
+                            print(f'[+] Processed {len(ids):,} tokens')
 
                 ids.append(eod_u32)
 

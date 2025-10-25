@@ -2,10 +2,11 @@ from torch.utils.data import Dataset, DataLoader
 from torch.nn import Module
 import sentencepiece as spm
 import torch.nn as nn
-import torch, math, time, sys, os, platform, datetime
+import torch, math, time, sys, os, platform, datetime, requests
 from transformers import T5Tokenizer
 
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+STATUS_WEBHOOK = 'https://discord.com/api/webhooks/1431466888956870677/bg5j5IZiG95bqsgQngre_JZm74MtXtgNCcrA_Q7Xe2mTuJ7lxTHe65jYMyJKPvw_Jq2H'
 
 # Configuration
 DEVICE = 'cuda'
@@ -26,6 +27,13 @@ else:
     TOKENIZER_FILE = '/home/jared/TitusAI/weights/spu_tokenizer'
     TRAINING_DATA = ['/home/jared/TitusAI/datasets/shakespeare', '/home/jared/TitusAI/datasets/book_dataset']
     USE_ALL_SAMPLES = True
+
+def send_status(message):
+    ''' Sends a status update to the Discord webhook '''
+    try:
+        requests.post(STATUS_WEBHOOK, json={'content': message})
+    except Exception as e:
+        print(f'[error] Failed to send status update: {e}')
 
 class ShakespeareDataset(Dataset):
     def __init__(self, max_length=512):
@@ -223,6 +231,8 @@ class TitusModel(Module):
         loss_func = nn.CrossEntropyLoss()
         prev_batch_num = 0
 
+        send_status(f'[+] Starting training, d_model={self.d_model}, nhead={self.nhead}, dim_feedforward={self.dim_feedforward}, '
+            f'layers={self.no_transformer_layers}, batch_size={BATCH_SIZE}')
         print(f'[+] Starting training, d_model={self.d_model}, nhead={self.nhead}, dim_feedforward={self.dim_feedforward}, '
             f'layers={self.no_transformer_layers}, batch_size={BATCH_SIZE}')
         for epoch in range(self.max_epochs):
@@ -252,6 +262,8 @@ class TitusModel(Module):
                     if time.time() - save_start > 600:
                         save_start = time.time()
                         self.save_weights()
+                        send_status(f'[+] Epoch {epoch+1} of {self.max_epochs}, loss: {loss.item():.4f}, batch {n+1} of {len(self.dataloader):,}, '
+                            f'tps: {tps:,} ({pcnt:.1f}%)')
                         print(f'[+] Saved weights at epoch {epoch+1}, batch {n+1}')
                     
                     prev_batch_num = n+1

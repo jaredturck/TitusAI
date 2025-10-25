@@ -13,18 +13,18 @@ TARGET_LOSS = 1.3
 EMBEDDING_SIZE = 2000
 
 if platform.node() == 'Jared-PC':
-    BATCH_SIZE = 1
+    BATCH_SIZE = 12
     MAX_SAMPLES = 100_000
     WEIGHTS_PATH = 'weights/'
     TOKENIZER_FILE = 'weights/spu_tokenizer'
-    TRAINING_DATA = ['datasets/training_data.txt', 'datasets/romantic_novels.txt']
+    TRAINING_DATA = ['datasets/shakespeare', 'datasets/book_dataset']
     USE_ALL_SAMPLES = False
 else:
-    BATCH_SIZE = 46
+    BATCH_SIZE = 140
     MAX_SAMPLES = 10_000_000
     WEIGHTS_PATH = '/home/jared/TitusAI/weights/'
     TOKENIZER_FILE = '/home/jared/TitusAI/weights/spu_tokenizer'
-    TRAINING_DATA = ['/home/jared/TitusAI/datasets/training_data.txt', '/home/jared/TitusAI/datasets/romantic_novels.txt']
+    TRAINING_DATA = ['/home/jared/TitusAI/datasets/shakespeare', '/home/jared/TitusAI/datasets/book_dataset']
     USE_ALL_SAMPLES = True
 
 class ShakespeareDataset(Dataset):
@@ -49,19 +49,21 @@ class ShakespeareDataset(Dataset):
 
         ids = []
         start = time.time()
-        for file_path in TRAINING_DATA:
-            with open(file_path, 'r', encoding='utf-8') as file:
-                for row in file:
-                    row = row.strip()
-                    if row:
-                        row_ids = self.tokenizer(row, return_tensors='pt', add_special_tokens=False).input_ids.squeeze(0)
-                        ids.append(self.tokenizer.bos_token_id)
-                        ids.extend(row_ids)
-                        ids.append(self.tokenizer.eos_token_id)
+        for folder in TRAINING_DATA:
+            for filename in os.listdir(folder):
+                file_path = os.path.join(folder, filename)
+                with open(file_path, 'r', encoding='utf-8') as file:
+                    for row in file:
+                        row = row.strip()
+                        if row:
+                            row_ids = self.tokenizer(row, return_tensors='pt', add_special_tokens=False).input_ids.squeeze(0)
+                            ids.append(self.tokenizer.bos_token_id)
+                            ids.extend(row_ids)
+                            ids.append(self.tokenizer.eos_token_id)
 
-                        if time.time() - start > 10:
-                            start = time.time()
-                            print(f'[+] Processed {len(ids):,} tokens')
+                            if time.time() - start > 10:
+                                start = time.time()
+                                print(f'[+] Processed {len(ids):,} tokens')
 
                 ids.append(eod_id)
 
@@ -103,9 +105,14 @@ class ShakespeareDataset(Dataset):
 
         if not os.path.isdir(TOKENIZER_FILE):
             os.makedirs(TOKENIZER_FILE)
+        
+        files = []
+        for folder in TRAINING_DATA:
+            for file in os.listdir(folder):
+                files.append(os.path.join(folder, file))
 
         spm.SentencePieceTrainer.Train(
-            input=','.join(TRAINING_DATA),
+            input=','.join(files),
             model_prefix=os.path.join(TOKENIZER_FILE, 'spu_tokenizer'),
             model_type='unigram',
             vocab_size=EMBEDDING_SIZE - 256,
@@ -123,7 +130,7 @@ class TitusModel(Module):
         super().__init__()
         Module.train(self, True)
         self.dataset = ShakespeareDataset()
-        self.d_model = 1536
+        self.d_model = 1024
         self.nhead = self.d_model // 64
         self.dim_feedforward = self.d_model * 4
         self.no_transformer_layers = self.d_model // 128
@@ -175,7 +182,7 @@ class TitusModel(Module):
             os.remove(oldest_file)
             print(f'[+] Deleted oldest weights file {oldest_file}')
 
-        weights_file = os.path.join(WEIGHTS_PATH, f'shakespeare_model_{datetime.datetime.now().strftime(r"%d_%b_%Y-%H_%M")}.pth')
+        weights_file = os.path.join(WEIGHTS_PATH, f'model_{datetime.datetime.now().strftime(r"%d_%b_%Y-%H_%M")}.pth')
         torch.save({
             'weights' : self.state_dict(),
             'optimizer' : self.optimizer.state_dict(),

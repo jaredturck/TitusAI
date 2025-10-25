@@ -1,4 +1,4 @@
-d_model = 1536
+d_model = 1024
 nhead = d_model // 64
 dim_feedforward = d_model * 4
 no_transformer_layers = d_model // 128

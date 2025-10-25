@@ -20,7 +20,7 @@ if platform.node() == 'Jared-PC':
     TRAINING_DATA = ['datasets/shakespeare', 'datasets/book_dataset']
     USE_ALL_SAMPLES = False
 else:
-    BATCH_SIZE = 140
+    BATCH_SIZE = 115
     MAX_SAMPLES = 10_000_000
     WEIGHTS_PATH = '/home/jared/TitusAI/weights/'
     TOKENIZER_FILE = '/home/jared/TitusAI/weights/spu_tokenizer'

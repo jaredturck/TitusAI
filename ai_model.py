@@ -18,14 +18,22 @@ if platform.node() == 'Jared-PC':
     MAX_SAMPLES = 100_000
     WEIGHTS_PATH = 'weights/'
     TOKENIZER_FILE = 'weights/spu_tokenizer'
-    TRAINING_DATA = ['datasets/shakespeare', 'datasets/book_dataset']
+    TRAINING_DATA = [
+        'datasets/wiki',
+        # 'datasets/shakespeare',
+        # 'datasets/book_dataset'
+    ]
     USE_ALL_SAMPLES = False
 else:
     BATCH_SIZE = 118
     MAX_SAMPLES = 10_000_000
     WEIGHTS_PATH = '/home/jared/TitusAI/weights/'
     TOKENIZER_FILE = '/home/jared/TitusAI/weights/spu_tokenizer'
-    TRAINING_DATA = ['/home/jared/TitusAI/datasets/shakespeare', '/home/jared/TitusAI/datasets/book_dataset']
+    TRAINING_DATA = [
+        '/home/jared/TitusAI/datasets/wiki',
+        # '/home/jared/TitusAI/datasets/shakespeare',
+        # '/home/jared/TitusAI/datasets/book_dataset'
+    ]
     USE_ALL_SAMPLES = True
 
 def send_status(message):
@@ -64,6 +72,11 @@ class ShakespeareDataset(Dataset):
                     for row in file:
                         row = row.strip()
                         if row:
+                            # EOS token
+                            if row == '[EOS]':
+                                ids.append(eod_id)
+                                continue
+
                             row_ids = self.tokenizer(row, return_tensors='pt', add_special_tokens=False).input_ids.squeeze(0)
                             ids.append(self.tokenizer.bos_token_id)
                             ids.extend(row_ids)
@@ -216,7 +229,7 @@ class TitusModel(Module):
                 self.load_state_dict(weights_data)
                 print(f'[+] Model weights loaded {weights_file} (optimizer state not found)')
     
-    def train(self):
+    def train_model(self):
         ''' Main training loop '''
 
         self.optimizer = torch.optim.AdamW(self.parameters(), lr=1e-4, fused=True)
@@ -299,13 +312,15 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == 'train':
         try:
             model = TitusModel().to(DEVICE)
-            model.train()
+            model.train_model()
             
         except KeyboardInterrupt:
             model.save_weights()
     else:
         model = TitusModel().to(DEVICE)
         model.load_weights()
+        model.eval()
+        print(f'[+] d_model={model.d_model}, nhead={model.nhead}, dim_feedforward={model.dim_feedforward}, layers={model.no_transformer_layers}')
         while True:
             text = input('> ')
             model.predict(text)

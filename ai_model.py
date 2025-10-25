@@ -15,7 +15,7 @@ TARGET_LOSS = 1.3
 EMBEDDING_SIZE = 2000
 
 if platform.node() == 'Jared-PC':
-    BATCH_SIZE = 10
+    BATCH_SIZE = 8
     MAX_SAMPLES = 100_000
     WEIGHTS_PATH = 'weights/'
     TOKENIZER_FILE = 'weights/spu_tokenizer'
@@ -49,16 +49,18 @@ class ShakespeareDataset(Dataset):
         self.max_length = max_length
         self.embedding_size = EMBEDDING_SIZE
         self.load_tokenizer()
+        self.dataset_len = None
 
     def __len__(self):
-        return len(self.training_data)
+        return self.dataset_len
 
     def __getitem__(self, idx):
-        return self.training_data[idx]
+        x = self.ids[idx : idx + self.max_length]
+        y = self.ids[idx + 1 : idx + self.max_length + 1]
+        return x,y
     
     def read_data(self):
         ''' Reads training data from TXT file '''
-        self.training_data = []
 
         print('[+] Reading training data...')
         eod_id = self.tokenizer.convert_tokens_to_ids('<eod>')
@@ -84,25 +86,10 @@ class ShakespeareDataset(Dataset):
 
                 ids.append(eod_u32)
 
-        print('[+] Creating x,y pairs')
-        ids = torch.frombuffer(memoryview(ids), dtype=torch.int32).clone().to(torch.long)
-        max_start = ids.size(0) - (self.max_length + 1)
-        start_time = time.time()
+        self.ids = torch.frombuffer(memoryview(ids), dtype=torch.int32).clone().to(torch.long)
+        self.dataset_len = len(self.ids) - (self.max_length + 1)
+        print(f'[+] Loaded {len(self.ids):,} training samples')
 
-        for start in range(0, max_start + 1):
-            x = ids[start : start + self.max_length]
-            y = ids[start + 1 : start + self.max_length + 1]
-            self.training_data.append((x, y))
-
-            if not USE_ALL_SAMPLES and start >= MAX_SAMPLES:
-                break
-
-            if time.time() - start_time > 10:
-                start_time = time.time()
-                print(f'[+] Processed {len(self.training_data):,} pairs')
-
-        print(f'[+] Loaded {len(self.training_data):,} training samples')
-    
     def load_tokenizer(self):
         ''' Loads an existing tokenizer from file '''
 

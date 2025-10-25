@@ -2,7 +2,8 @@ from torch.utils.data import Dataset, DataLoader
 from torch.nn import Module
 import sentencepiece as spm
 import torch.nn as nn
-import torch, math, time, sys, os, platform, datetime, requests
+import torch, math, time, sys, os, platform, datetime, requests, array
+import numpy as np
 from transformers import T5Tokenizer
 
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
@@ -63,7 +64,11 @@ class ShakespeareDataset(Dataset):
         eod_id = self.tokenizer.convert_tokens_to_ids('<eod>')
         assert isinstance(eod_id, int) and eod_id != self.tokenizer.unk_token_id, '[error] <eod> token not found in tokenizer vocabulary'
 
-        ids = []
+        ids = array.array('I')
+        bos_id = np.uint32(self.tokenizer.bos_token_id)
+        eos_id = np.uint32(self.tokenizer.eos_token_id)
+        eod_u32 = np.uint32(eod_id)
+
         start = time.time()
         for folder in TRAINING_DATA:
             for filename in os.listdir(folder):
@@ -74,22 +79,24 @@ class ShakespeareDataset(Dataset):
                         if row:
                             # EOS token
                             if row == '[EOS]':
-                                ids.append(eod_id)
+                                ids.append(eod_u32)
                                 continue
 
-                            row_ids = self.tokenizer(row, return_tensors='pt', add_special_tokens=False).input_ids.squeeze(0)
-                            ids.append(self.tokenizer.bos_token_id)
-                            ids.extend(row_ids)
-                            ids.append(self.tokenizer.eos_token_id)
+                            row_ids = self.tokenizer(row, return_tensors='pt', add_special_tokens=False)\
+                                .input_ids.squeeze(0).cpu().numpy().astype(np.uint32, copy=False)
+                            
+                            ids.append(bos_id)
+                            ids.frombytes(row_ids.tobytes())
+                            ids.append(eos_id)
 
                             if time.time() - start > 10:
                                 start = time.time()
                                 print(f'[+] Processed {len(ids):,} tokens')
 
-                ids.append(eod_id)
+                ids.append(eod_u32)
 
         print('[+] Creating x,y pairs')
-        ids = torch.tensor(ids)
+        ids = torch.frombuffer(memoryview(ids), dtype=torch.int32).clone().to(torch.long)
         max_start = ids.size(0) - (self.max_length + 1)
         start_time = time.time()
 

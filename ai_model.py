@@ -15,7 +15,7 @@ TARGET_LOSS = 1.3
 EMBEDDING_SIZE = 2000
 
 if platform.node() == 'Jared-PC':
-    BATCH_SIZE = 8
+    BATCH_SIZE = 9
     MAX_SAMPLES = 100_000
     WEIGHTS_PATH = 'weights/'
     TOKENIZER_FILE = 'weights/spu_tokenizer'
@@ -55,9 +55,7 @@ class ShakespeareDataset(Dataset):
         return self.dataset_len
 
     def __getitem__(self, idx):
-        x = self.ids[idx : idx + self.max_length]
-        y = self.ids[idx + 1 : idx + self.max_length + 1]
-        return x,y
+        return self.ids[idx : idx + self.max_length + 1]
     
     def read_data(self):
         ''' Reads training data from TXT file '''
@@ -236,9 +234,12 @@ class TitusModel(Module):
             epoch_start = time.time()
             save_start = time.time()
             start = time.time()
-            for n, (src, trg) in enumerate(self.dataloader):
-                src = src.to(DEVICE, non_blocking=True)
-                trg = trg.to(DEVICE, non_blocking=True)
+            for n, batch in enumerate(self.dataloader):
+
+                batch = batch.to(DEVICE, non_blocking=True)
+
+                src = batch[:, :-1]
+                trg = batch[:, 1:]
 
                 self.optimizer.zero_grad()
                 with torch.autocast(device_type=DEVICE, dtype=torch.bfloat16):

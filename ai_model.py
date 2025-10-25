@@ -280,14 +280,19 @@ class TitusModel(Module):
     def predict(self, text):
 
         seq = self.dataset.tokenizer(text, return_tensors='pt')['input_ids'].to(DEVICE)
+        eod_id = self.dataset.tokenizer.convert_tokens_to_ids('<eod>')
+        input_len = seq.size(1)
 
         for _ in range(self.max_length):
             x = seq[:, -self.max_length:]
             logits = self.forward(x)
             next_token = logits[:, -1, :].argmax(dim=-1, keepdim=True)
             seq = torch.cat([seq, next_token], dim=-1)
+
+            if next_token.item() == self.dataset.tokenizer.eos_token_id or next_token.item() == eod_id:
+                break
         
-        output_txt = self.dataset.tokenizer.decode(seq[0].tolist(), skip_special_tokens=True)
+        output_txt = self.dataset.tokenizer.decode(seq[0, input_len:].tolist(), skip_special_tokens=True)
         print(output_txt)
 
 if __name__ == "__main__":

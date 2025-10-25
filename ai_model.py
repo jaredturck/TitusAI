@@ -20,7 +20,7 @@ if platform.node() == 'Jared-PC':
     TRAINING_DATA = ['datasets/training_data.txt', 'datasets/romantic_novels.txt']
     USE_ALL_SAMPLES = False
 else:
-    BATCH_SIZE = 32
+    BATCH_SIZE = 46
     MAX_SAMPLES = 10_000_000
     WEIGHTS_PATH = '/home/jared/TitusAI/weights/'
     TOKENIZER_FILE = '/home/jared/TitusAI/weights/spu_tokenizer'
@@ -240,9 +240,9 @@ class TitusModel(Module):
                     pcnt = (n+1) / len(self.dataloader) * 100
                     tps = int((((n+1) - prev_batch_num) * BATCH_SIZE * self.max_length) / (time.time() - start))
                     start = time.time()
-                    print(f'[+] Epoch {epoch+1} of {self.max_epochs}, loss: {loss.item():.4f}, batch {n+1} of {len(self.dataloader)}, tps: {tps:,} ({pcnt:.1f}%)')
+                    print(f'[+] Epoch {epoch+1} of {self.max_epochs}, loss: {loss.item():.4f}, batch {n+1} of {len(self.dataloader):,}, tps: {tps:,} ({pcnt:.1f}%)')
                 
-                    if time.time() - save_start > 900:
+                    if time.time() - save_start > 600:
                         save_start = time.time()
                         self.save_weights()
                         print(f'[+] Saved weights at epoch {epoch+1}, batch {n+1}')

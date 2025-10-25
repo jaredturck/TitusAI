@@ -237,7 +237,6 @@ class TitusModel(Module):
             for n, batch in enumerate(self.dataloader):
 
                 batch = batch.to(DEVICE, non_blocking=True)
-
                 src = batch[:, :-1]
                 trg = batch[:, 1:]
 

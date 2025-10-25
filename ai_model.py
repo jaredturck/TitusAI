@@ -15,14 +15,14 @@ TARGET_LOSS = 1.3
 EMBEDDING_SIZE = 2000
 
 if platform.node() == 'Jared-PC':
-    BATCH_SIZE = 12
+    BATCH_SIZE = 10
     MAX_SAMPLES = 100_000
     WEIGHTS_PATH = 'weights/'
     TOKENIZER_FILE = 'weights/spu_tokenizer'
     TRAINING_DATA = [
-        'datasets/wiki',
-        # 'datasets/shakespeare',
-        # 'datasets/book_dataset'
+        # 'datasets/wiki',
+        'datasets/shakespeare',
+        'datasets/book_dataset'
     ]
     USE_ALL_SAMPLES = False
 else:
@@ -65,8 +65,6 @@ class ShakespeareDataset(Dataset):
         assert isinstance(eod_id, int) and eod_id != self.tokenizer.unk_token_id, '[error] <eod> token not found in tokenizer vocabulary'
 
         ids = array.array('I')
-        bos_id = np.uint32(self.tokenizer.bos_token_id)
-        eos_id = np.uint32(self.tokenizer.eos_token_id)
         eod_u32 = np.uint32(eod_id)
 
         start = time.time()
@@ -74,24 +72,15 @@ class ShakespeareDataset(Dataset):
             for filename in os.listdir(folder):
                 file_path = os.path.join(folder, filename)
                 with open(file_path, 'r', encoding='utf-8') as file:
-                    for row in file:
-                        row = row.strip()
-                        if row:
-                            # EOS token
-                            if row == '[EOS]':
-                                ids.append(eod_u32)
-                                continue
 
-                            row_ids = self.tokenizer(row, return_tensors='pt', add_special_tokens=False)\
-                                .input_ids.squeeze(0).cpu().numpy().astype(np.uint32, copy=False)
-                            
-                            ids.append(bos_id)
-                            ids.frombytes(row_ids.tobytes())
-                            ids.append(eos_id)
+                    doc_content = file.read()
+                    doc_ids = self.tokenizer(doc_content, return_tensors='pt', add_special_tokens=False)\
+                        .input_ids.squeeze(0).cpu().numpy().astype(np.uint32, copy=False)
+                    ids.frombytes(doc_ids.tobytes())
 
-                            if time.time() - start > 10:
-                                start = time.time()
-                                print(f'[+] Processed {len(ids):,} tokens')
+                    if time.time() - start > 10:
+                        start = time.time()
+                        print(f'[+] Processed {len(ids):,} tokens')
 
                 ids.append(eod_u32)
 

@@ -13,9 +13,10 @@ STATUS_WEBHOOK = 'https://discord.com/api/webhooks/1431466888956870677/bg5j5IZiG
 DEVICE = 'cuda'
 TARGET_LOSS = 1.3
 EMBEDDING_SIZE = 2000
+MAX_LENGTH = 200
 
 if platform.node() == 'Jared-PC':
-    BATCH_SIZE = 9
+    BATCH_SIZE = 48
     MAX_SAMPLES = 100_000
     WEIGHTS_PATH = 'weights/'
     TOKENIZER_FILE = 'weights/spu_tokenizer'
@@ -31,9 +32,9 @@ else:
     WEIGHTS_PATH = '/home/jared/TitusAI/weights/'
     TOKENIZER_FILE = '/home/jared/TitusAI/weights/spu_tokenizer'
     TRAINING_DATA = [
-        '/home/jared/TitusAI/datasets/wiki',
-        # '/home/jared/TitusAI/datasets/shakespeare',
-        # '/home/jared/TitusAI/datasets/book_dataset'
+        # '/home/jared/TitusAI/datasets/wiki',
+        '/home/jared/TitusAI/datasets/shakespeare',
+        '/home/jared/TitusAI/datasets/book_dataset'
     ]
     USE_ALL_SAMPLES = True
 
@@ -45,8 +46,8 @@ def send_status(message):
         print(f'[error] Failed to send status update: {e}')
 
 class ShakespeareDataset(Dataset):
-    def __init__(self, max_length=512):
-        self.max_length = max_length
+    def __init__(self):
+        self.max_length = MAX_LENGTH
         self.embedding_size = EMBEDDING_SIZE
         self.load_tokenizer()
         self.dataset_len = None
@@ -141,7 +142,7 @@ class TitusModel(Module):
         self.no_transformer_layers = self.d_model // 128
         self.dropout = 0.1
         self.embedding_size = EMBEDDING_SIZE
-        self.max_length = 512
+        self.max_length = MAX_LENGTH
         self.max_epochs = 10000
         self.context = torch.empty(1, 0, dtype=torch.long, device=DEVICE)
         self.sqrt_dmodel = math.sqrt(self.d_model)
@@ -297,13 +298,13 @@ class TitusModel(Module):
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == 'train':
         try:
-            model = TitusModel().to(DEVICE)
+            model = TitusModel().to(DEVICE, torch.bfloat16)
             model.train_model()
             
         except KeyboardInterrupt:
             model.save_weights()
     else:
-        model = TitusModel().to(DEVICE)
+        model = TitusModel().to(DEVICE, torch.bfloat16)
         model.load_weights()
         model.eval()
         print(f'[+] d_model={model.d_model}, nhead={model.nhead}, dim_feedforward={model.dim_feedforward}, layers={model.no_transformer_layers}')

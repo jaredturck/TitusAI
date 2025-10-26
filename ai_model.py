@@ -17,7 +17,7 @@ EMBEDDING_SIZE = 2000
 MAX_LENGTH = 200
 
 if platform.node() == 'Jared-PC':
-    BATCH_SIZE = 160
+    BATCH_SIZE = 200
     MAX_SAMPLES = 100_000
     WEIGHTS_PATH = 'weights/'
     TOKENIZER_FILE = 'weights/spu_tokenizer'
@@ -28,7 +28,7 @@ if platform.node() == 'Jared-PC':
     ]
     USE_ALL_SAMPLES = False
 else:
-    BATCH_SIZE = 310
+    BATCH_SIZE = 1180
     MAX_SAMPLES = 10_000_000
     WEIGHTS_PATH = '/home/jared/TitusAI/weights/'
     TOKENIZER_FILE = '/home/jared/TitusAI/weights/spu_tokenizer'

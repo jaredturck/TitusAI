@@ -21,4 +21,11 @@ BPE:
 
 Tokenizer logic:
 - add fallback tokens A-Za-z0-9 and some symbols
-- Split after every contigous block of alpha characters "the cat." --> ["the", " ", "cat", "."]
+- convert "e" with hat to "e"
+- Split after every contigious block of alpha characters "the cat." --> ["the", " ", "cat", "."]
+- remove all single char sets so we get ["the", "cat"]
+- Generate a set of candidates, then proone the set based on how often items occure
+
+- tokens should never span multiple words "the cat", should be "the" and "cat"
+- numbers should never appear in tokens except for the base set of 0-9
+- special symbols should never appear in tokens

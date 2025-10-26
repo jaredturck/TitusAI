@@ -47,7 +47,6 @@ def send_status(message):
 class ShakespeareDataset(Dataset):
     def __init__(self):
         self.max_length = MAX_LENGTH
-        self.embedding_size = EMBEDDING_SIZE
         self.tokenizer = AutoTokenizer.from_pretrained('google/byt5-small')
         self.dataset_len = None
         self.buffer_size = 1024 * 1024 * 16  # 16 MB buffer
@@ -83,6 +82,10 @@ class ShakespeareDataset(Dataset):
         self.ids = torch.frombuffer(memoryview(ids), dtype=torch.int32).clone().to(torch.long)
         self.dataset_len = len(self.ids) - (self.max_length + 1)
         print(f'[+] Loaded {len(self.ids):,} training samples')
+
+    def save_tensors(self):
+        filename = os.path.join(WEIGHTS_PATH, f'tensors_{datetime.datetime.now().strftime(r"%d_%b_%Y-%H_%M")}.data')
+        torch.save(self.ids, filename)
 
 class TitusModel(Module):
     def __init__(self):
@@ -174,6 +177,7 @@ class TitusModel(Module):
         self.load_weights()
 
         self.dataset.read_data()
+        self.dataset.save_tensors()
         self.dataloader = DataLoader(
             self.dataset, batch_size=BATCH_SIZE, shuffle=True, pin_memory=True, num_workers=self.dataloader_workers,
             persistent_workers=True, prefetch_factor=4

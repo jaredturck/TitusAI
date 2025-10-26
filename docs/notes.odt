@@ -1,0 +1,24 @@
+﻿1GB of wiki text = 510,278,861 tokens
+
+So the tokenizer is concatentating every 2 bytes on average
+
+with max length=512, batch_size=9 tps=6953
+max length=256, batch_size=40, tps=6857
+
+with the model set to use torch.bfloat16, batch_size=48
+
+with graident checkpointing tps=5167
+- thats a 15% reduction in compute and a significant reduction in VRAM
+- turns out the compute cost is vastly worse making it non-feasable
+
+tokenizer:
+- we want a short vocab size, only basic ASCII characters are allowed a-zA-Z0-9 and some symbols
+- some of the vocab is reserved for encoding indivual characters for uncommon words
+- rest of the vocab is reserved for common word mappings
+
+BPE:
+- find the most common repeating sets of symbols within the text and assing those specific IDs
+
+Tokenizer logic:
+- add fallback tokens A-Za-z0-9 and some symbols
+- Split after every contigous block of alpha characters "the cat." --> ["the", " ", "cat", "."]

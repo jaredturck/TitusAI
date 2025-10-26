@@ -3,7 +3,7 @@ nhead = d_model // 64
 dim_feedforward = d_model * 4
 no_transformer_layers = d_model // 128
 dropout = 0.1
-embedding_size = 2000
+embedding_size = 50_000
 max_length = 200
 batch_size = 256
 

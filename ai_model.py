@@ -1,11 +1,10 @@
 from torch.utils.data import Dataset, DataLoader
 from torch.nn import Module
 from torch.utils.checkpoint import checkpoint
-import sentencepiece as spm
 import torch.nn as nn
 import torch, math, time, sys, os, platform, datetime, requests, array
 import numpy as np
-from transformers import T5Tokenizer
+from transformers import AutoTokenizer
 
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 STATUS_WEBHOOK = 'https://discord.com/api/webhooks/1431466888956870677/bg5j5IZiG95bqsgQngre_JZm74MtXtgNCcrA_Q7Xe2mTuJ7lxTHe65jYMyJKPvw_Jq2H'
@@ -13,7 +12,7 @@ STATUS_WEBHOOK = 'https://discord.com/api/webhooks/1431466888956870677/bg5j5IZiG
 # Configuration
 DEVICE = 'cuda'
 TARGET_LOSS = 1.3
-EMBEDDING_SIZE = 2000
+EMBEDDING_SIZE = 259
 MAX_LENGTH = 200
 
 if platform.node() == 'Jared-PC':
@@ -50,7 +49,7 @@ class ShakespeareDataset(Dataset):
     def __init__(self):
         self.max_length = MAX_LENGTH
         self.embedding_size = EMBEDDING_SIZE
-        self.load_tokenizer()
+        self.tokenizer = AutoTokenizer.from_pretrained('google/byt5-small')
         self.dataset_len = None
         self.buffer_size = 1024 * 1024 * 16  # 16 MB buffer
 
@@ -64,12 +63,7 @@ class ShakespeareDataset(Dataset):
         ''' Reads training data from TXT file '''
 
         print('[+] Reading training data...')
-        eod_id = self.tokenizer.convert_tokens_to_ids('<eod>')
-        assert isinstance(eod_id, int) and eod_id != self.tokenizer.unk_token_id, '[error] <eod> token not found in tokenizer vocabulary'
-
         ids = array.array('I')
-        eod_u32 = np.uint32(eod_id)
-
         start = time.time()
         for folder in TRAINING_DATA:
             for filename in os.listdir(folder):
@@ -87,50 +81,9 @@ class ShakespeareDataset(Dataset):
                             start = time.time()
                             print(f'[+] Processed {len(ids):,} tokens')
 
-                ids.append(eod_u32)
-
         self.ids = torch.frombuffer(memoryview(ids), dtype=torch.int32).clone().to(torch.long)
         self.dataset_len = len(self.ids) - (self.max_length + 1)
         print(f'[+] Loaded {len(self.ids):,} training samples')
-
-    def load_tokenizer(self):
-        ''' Loads an existing tokenizer from file '''
-
-        if not os.path.isfile(os.path.join(TOKENIZER_FILE, 'spu_tokenizer.model')):
-            input('[error] Failed to load existing tokenizer, please train a new one. Press Enter to continue...')
-            self.train_tokenizer()
-
-        # Load tokenizer
-        self.tokenizer = T5Tokenizer(
-            vocab_file=os.path.join(TOKENIZER_FILE, 'spu_tokenizer.model'),
-            bos_token='<s>', eos_token='</s>', unk_token='<unk>', pad_token='<pad>', extra_ids=0
-        )
-        print('[+] Loaded existing tokenizer')
-
-    def train_tokenizer(self):
-        ''' Trains a SentencePiece tokenizer on the training data '''
-
-        if not os.path.isdir(TOKENIZER_FILE):
-            os.makedirs(TOKENIZER_FILE)
-        
-        files = []
-        for folder in TRAINING_DATA:
-            for file in os.listdir(folder):
-                files.append(os.path.join(folder, file))
-
-        spm.SentencePieceTrainer.Train(
-            input=','.join(files),
-            model_prefix=os.path.join(TOKENIZER_FILE, 'spu_tokenizer'),
-            model_type='unigram',
-            vocab_size=EMBEDDING_SIZE - 256,
-            byte_fallback=True,
-            user_defined_symbols=['<eod>'],
-            pad_id=0, pad_piece='<pad>',
-            unk_id=1, unk_piece='<unk>',
-            bos_id=2, bos_piece='<s>',
-            eos_id=3,  eos_piece='</s>',
-            normalization_rule_name='nfkc'
-        )
 
 class TitusModel(Module):
     def __init__(self):
@@ -170,16 +123,16 @@ class TitusModel(Module):
         src_B, src_T = src.size()
         pos = self.pos_arange[:src_T].unsqueeze(0).expand(src_B, src_T)
 
-        causal_mask = self.full_causal_mask[:src_T, :src_T]
-
-        x = self.em_dropout(self.embeddings(src) * self.sqrt_dmodel + self.pos_emb(pos))
-        for layer in self.encoder.layers:
-            x = checkpoint(
-                lambda inp, m: layer(inp, m, None, False),
-                x, causal_mask, use_reentrant=False
+        logits = self.out_proj(
+            self.encoder(
+                self.em_dropout(
+                    self.embeddings(src) * self.sqrt_dmodel + self.pos_emb(pos)
+                ),
+                mask = self.full_causal_mask[:src_T, :src_T]
             )
-        
-        return self.out_proj(x)
+        )
+
+        return logits
     
     def save_weights(self):
         # Delete oldest weight file

@@ -1,5 +1,6 @@
 from torch.utils.data import Dataset, DataLoader
 from torch.nn import Module
+from torch.utils.checkpoint import checkpoint
 import sentencepiece as spm
 import torch.nn as nn
 import torch, math, time, sys, os, platform, datetime, requests, array
@@ -16,7 +17,7 @@ EMBEDDING_SIZE = 2000
 MAX_LENGTH = 200
 
 if platform.node() == 'Jared-PC':
-    BATCH_SIZE = 48
+    BATCH_SIZE = 160
     MAX_SAMPLES = 100_000
     WEIGHTS_PATH = 'weights/'
     TOKENIZER_FILE = 'weights/spu_tokenizer'
@@ -169,16 +170,16 @@ class TitusModel(Module):
         src_B, src_T = src.size()
         pos = self.pos_arange[:src_T].unsqueeze(0).expand(src_B, src_T)
 
-        logits = self.out_proj(
-            self.encoder(
-                self.em_dropout(
-                    self.embeddings(src) * self.sqrt_dmodel + self.pos_emb(pos)
-                ),
-                mask = self.full_causal_mask[:src_T, :src_T]
-            )
-        )
+        causal_mask = self.full_causal_mask[:src_T, :src_T]
 
-        return logits
+        x = self.em_dropout(self.embeddings(src) * self.sqrt_dmodel + self.pos_emb(pos))
+        for layer in self.encoder.layers:
+            x = checkpoint(
+                lambda inp, m: layer(inp, m, None, False),
+                x, causal_mask, use_reentrant=False
+            )
+        
+        return self.out_proj(x)
     
     def save_weights(self):
         # Delete oldest weight file

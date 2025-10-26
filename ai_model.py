@@ -1,6 +1,5 @@
 from torch.utils.data import Dataset, DataLoader
 from torch.nn import Module
-from torch.utils.checkpoint import checkpoint
 import torch.nn as nn
 import torch, math, time, sys, os, platform, datetime, requests, array
 import numpy as np
@@ -16,7 +15,7 @@ EMBEDDING_SIZE = 259
 MAX_LENGTH = 200
 
 if platform.node() == 'Jared-PC':
-    BATCH_SIZE = 200
+    BATCH_SIZE = 45
     MAX_SAMPLES = 100_000
     WEIGHTS_PATH = 'weights/'
     TOKENIZER_FILE = 'weights/spu_tokenizer'
@@ -27,7 +26,7 @@ if platform.node() == 'Jared-PC':
     ]
     USE_ALL_SAMPLES = False
 else:
-    BATCH_SIZE = 1180
+    BATCH_SIZE = 260
     MAX_SAMPLES = 10_000_000
     WEIGHTS_PATH = '/home/jared/TitusAI/weights/'
     TOKENIZER_FILE = '/home/jared/TitusAI/weights/spu_tokenizer'

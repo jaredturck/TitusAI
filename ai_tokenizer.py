@@ -12,7 +12,7 @@ class Tokenizer:
         self.charset = {chr(i) : n for n,i in enumerate(range(32, 126))}
 
         file_text = self.read_files()
-        file_text = SAMPLE_TEXT
+        # file_text = SAMPLE_TEXT
 
         self.get_pieces(file_text, topk=self.max_embeddings - len(self.charset))
     
@@ -40,35 +40,41 @@ class Tokenizer:
 
         assert topk > 0, 'topk must be positive integer'
         text = list(text)
+        previous_len = None
 
-        for n in range(1):
+        for n in range(20):
 
             i = 0
             counters = {}
+            if len(text) == previous_len:
+                break
+            previous_len = len(text)
 
-            # Loop through each possible candidate of the text
-            for _ in range(len(text)):
-                if i + 1 >= len(text):
-                    break
-
+            # Generate counters
+            for k in range(len(text) - 1):
+                slice = text[k] + text[k + 1]
+                if slice.isalpha():
+                    if slice in counters:
+                        counters[slice] += 1
+                    else:
+                        counters[slice] = 1
+            
+            # Loop through counters:
+            for _ in range(len(text) - 1):
                 slice = text[i] + text[i + 1]
-                if not slice.isalpha():
-                    i += 1
-                    continue
-                
-                if slice in counters:
-                    text[i] = slice
+                cnt = counters.get(slice,0)
+                if cnt >= 2:
+                    text[i] = text[i] + text[i + 1]
                     del text[i + 1]
-                    continue
-                else:
-                    counters[slice] = 1
+                    i = max(i - 1, 0)
+                
+                i += 1
 
-            # Add candidates that appear more than once to global candidates
-            # for c in consider_candidates:
-            #     counters[c] = local_counters[c]
-            print(text)
             print([len(text)])
         
+        global_counters = Counter(filter(lambda x : len(x) > 1, text))
+        # print(global_counters)
+        # print(text)
         input('STOP')
 
         sorted_pieces = [i[0] for i in sorted(counters.items(), key=self.get_tokp, reverse=True)[:topk]]

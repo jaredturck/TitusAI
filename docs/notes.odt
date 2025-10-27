@@ -29,3 +29,14 @@ Tokenizer logic:
 - tokens should never span multiple words "the cat", should be "the" and "cat"
 - numbers should never appear in tokens except for the base set of 0-9
 - special symbols should never appear in tokens
+
+benchmark
+['topk=100', 838832, 773976]
+['topk=200', 838832, 554170]
+['topk=300', 838832, 510491]
+['topk=400', 838832, 484967]
+['topk=500', 838832, 468558]
+['topk=600', 838832, 456708]
+['topk=700', 838832, 449034]
+['topk=800', 838832, 442540]
+['topk=900', 838832, 439661]

@@ -65,12 +65,15 @@ class Tokenizer:
                 cnt = counters.get(slice,0)
                 if cnt >= 2:
                     text[i] = text[i] + text[i + 1]
-                    del text[i + 1]
+                    del text[i + 1] # Very slowing entire list contents is shifted when you perform delete
                     i = max(i - 1, 0)
                 
                 i += 1
 
             print([len(text)])
+        
+        # The code is quite slow due to the del operation, and also the text[i] = text[i] + text[i + 1] is very slow as well due to a string copy
+        # Better approach would be to manipulate pointers instead of the actual string
         
         global_counters = Counter(filter(lambda x : len(x) > 1, text))
         # print(global_counters)

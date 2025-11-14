@@ -255,13 +255,13 @@ class TitusModel(Module):
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == 'train':
         try:
-            model = TitusModel().to(DEVICE, torch.bfloat16)
+            model = TitusModel().to(DEVICE)
             model.train_model()
             
         except KeyboardInterrupt:
             model.save_weights()
     else:
-        model = TitusModel().to(DEVICE, torch.bfloat16)
+        model = TitusModel().to(DEVICE)
         model.load_weights()
         model.eval()
         print(f'[+] d_model={model.d_model}, nhead={model.nhead}, dim_feedforward={model.dim_feedforward}, layers={model.no_transformer_layers}')

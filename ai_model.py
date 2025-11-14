@@ -11,17 +11,15 @@ STATUS_WEBHOOK = 'https://discord.com/api/webhooks/1431466888956870677/bg5j5IZiG
 # Configuration
 DEVICE = 'cuda'
 TARGET_LOSS = 1.3
-EMBEDDING_SIZE = 259
 MAX_LENGTH = 200
 
 if platform.node() == 'Jared-PC':
-    BATCH_SIZE = 45
+    BATCH_SIZE = 28
     MAX_SAMPLES = 100_000
     WEIGHTS_PATH = 'weights/'
     TOKENIZER_FILE = 'weights/spu_tokenizer'
     TRAINING_DATA = [
         # 'datasets/wiki',
-        'datasets/shakespeare',
         'datasets/book_dataset'
     ]
     USE_ALL_SAMPLES = False
@@ -32,7 +30,6 @@ else:
     TOKENIZER_FILE = '/home/jared/TitusAI/weights/spu_tokenizer'
     TRAINING_DATA = [
         # '/home/jared/TitusAI/datasets/wiki',
-        '/home/jared/TitusAI/datasets/shakespeare',
         '/home/jared/TitusAI/datasets/book_dataset'
     ]
     USE_ALL_SAMPLES = True
@@ -47,7 +44,7 @@ def send_status(message):
 class ShakespeareDataset(Dataset):
     def __init__(self):
         self.max_length = MAX_LENGTH
-        self.tokenizer = AutoTokenizer.from_pretrained('google/byt5-small')
+        self.tokenizer = AutoTokenizer.from_pretrained("gpt2")
         self.dataset_len = None
         self.buffer_size = 1024 * 1024 * 16  # 16 MB buffer
 
@@ -97,7 +94,7 @@ class TitusModel(Module):
         self.dim_feedforward = self.d_model * 4
         self.no_transformer_layers = self.d_model // 128
         self.dropout = 0.1
-        self.embedding_size = EMBEDDING_SIZE
+        self.embedding_size = self.dataset.tokenizer.vocab_size
         self.max_length = MAX_LENGTH
         self.max_epochs = 10000
         self.context = torch.empty(1, 0, dtype=torch.long, device=DEVICE)
@@ -117,21 +114,23 @@ class TitusModel(Module):
             num_layers=self.no_transformer_layers
         )
 
-        self.out_proj = nn.Linear(self.d_model, self.embedding_size)
-        self.out_proj.weight = self.embeddings.weight
-    
+        self.adaptive_softmax = nn.AdaptiveLogSoftmaxWithLoss(
+            in_features=self.d_model,
+            n_classes=self.dataset.tokenizer.vocab_size,
+            cutoffs=[2000, 10_000],
+            div_value=4.0
+        )
+
     def forward(self, src):
 
         src_B, src_T = src.size()
         pos = self.pos_arange[:src_T].unsqueeze(0).expand(src_B, src_T)
 
-        logits = self.out_proj(
-            self.encoder(
-                self.em_dropout(
-                    self.embeddings(src) * self.sqrt_dmodel + self.pos_emb(pos)
-                ),
-                mask = self.full_causal_mask[:src_T, :src_T]
-            )
+        logits = self.encoder(
+            self.em_dropout(
+                self.embeddings(src) * self.sqrt_dmodel + self.pos_emb(pos)
+            ),
+            mask = self.full_causal_mask[:src_T, :src_T]
         )
 
         return logits
@@ -183,13 +182,12 @@ class TitusModel(Module):
             persistent_workers=True, prefetch_factor=4
         )
 
-        loss_func = nn.CrossEntropyLoss()
         prev_batch_num = 0
 
         send_status(f'[+] Starting training, d_model={self.d_model}, nhead={self.nhead}, dim_feedforward={self.dim_feedforward}, '
-            f'layers={self.no_transformer_layers}, batch_size={BATCH_SIZE}')
+            f'layers={self.no_transformer_layers}, batch_size={BATCH_SIZE}, embedding_size={self.embedding_size}')
         print(f'[+] Starting training, d_model={self.d_model}, nhead={self.nhead}, dim_feedforward={self.dim_feedforward}, '
-            f'layers={self.no_transformer_layers}, batch_size={BATCH_SIZE}')
+            f'layers={self.no_transformer_layers}, batch_size={BATCH_SIZE}, embedding_size={self.embedding_size}')
         for epoch in range(self.max_epochs):
             total_loss = 0.0
             epoch_start = time.time()
@@ -202,9 +200,13 @@ class TitusModel(Module):
                 trg = batch[:, 1:]
 
                 self.optimizer.zero_grad()
-                with torch.autocast(device_type=DEVICE, dtype=torch.bfloat16):
-                    output = self.forward(src)
-                    loss = loss_func(output.reshape(-1, output.size(-1)), trg.reshape(-1))
+                
+                out = self.forward(src)
+                out2d = out.reshape(-1, out.size(-1))
+                tgt1d = trg.reshape(-1)
+
+                out = self.adaptive_softmax(out2d, tgt1d)
+                loss = out.loss
 
                 loss.backward()
                 self.optimizer.step()
@@ -243,7 +245,8 @@ class TitusModel(Module):
         for _ in range(self.max_length):
             x = seq[:, -self.max_length:]
             logits = self.forward(x)
-            next_token = logits[:, -1, :].argmax(dim=-1, keepdim=True)
+            probs = self.adaptive_softmax.log_prob(logits[:, -1, :])
+            next_token = probs.argmax(dim=-1, keepdim=True)
             seq = torch.cat([seq, next_token], dim=-1)
 
             if next_token.item() == self.dataset.tokenizer.eos_token_id or next_token.item() == eod_id:

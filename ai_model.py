@@ -249,6 +249,7 @@ class TitusModel(Module):
 
         input_len = seq.size(1)
         seen_bos = False
+        bos_index = None
 
         for _ in range(self.max_length):
             x = seq[:, -self.max_length:]
@@ -257,13 +258,17 @@ class TitusModel(Module):
             next_token = probs.argmax(dim=-1, keepdim=True)
             seq = torch.cat([seq, next_token], dim=-1)
 
-            if next_token.item() == self.dataset.tokenizer.bos_token_id:
+            if not seen_bos and next_token.item() == self.dataset.tokenizer.bos_token_id:
                 seen_bos = True
+                bos_index = seq.size(1) - 1
 
             if seen_bos and next_token.item() == self.dataset.tokenizer.eos_token_id:
                 break
         
         output_seq = seq[0, input_len:]
+        if bos_index:
+            output_seq = output_seq[bos_index - input_len + 1 :]
+
         output_txt = self.dataset.tokenizer.decode(output_seq.tolist(), skip_special_tokens=True)
         print(output_txt)
 

@@ -106,6 +106,7 @@ class TitusModel(Module):
         self.sqrt_dmodel = math.sqrt(self.d_model)
         self.dataloader_workers = max(2, os.cpu_count() // 2)
         self.optimizer = None
+        self.context_string = torch.empty(0, dtype=torch.long, device=DEVICE)
 
         self.register_buffer('pos_arange', torch.arange(self.max_length, device=DEVICE))
         self.register_buffer('full_causal_mask', torch.triu(torch.ones(self.max_length, self.max_length, dtype=torch.bool, device=DEVICE), diagonal=1))
@@ -173,7 +174,7 @@ class TitusModel(Module):
             else:
                 self.load_state_dict(weights_data)
                 print(f'[+] Model weights loaded {weights_file} (optimizer state not found)')
-    
+
     def train_model(self):
         ''' Main training loop '''
 
@@ -243,8 +244,11 @@ class TitusModel(Module):
     @torch.no_grad()
     def predict(self, text):
 
-        seq = self.dataset.tokenizer(text, return_tensors='pt')['input_ids'].to(DEVICE)
+        new_ids = self.dataset.tokenizer(text, return_tensors='pt')['input_ids'].to(DEVICE)[0]
+        seq = torch.cat([self.context_string, new_ids], dim=0).unsqueeze(0)
+
         input_len = seq.size(1)
+        seen_bos = False
 
         for _ in range(self.max_length):
             x = seq[:, -self.max_length:]
@@ -253,11 +257,19 @@ class TitusModel(Module):
             next_token = probs.argmax(dim=-1, keepdim=True)
             seq = torch.cat([seq, next_token], dim=-1)
 
-            if next_token.item() == self.dataset.tokenizer.eos_token_id:
+            if next_token.item() == self.dataset.tokenizer.bos_token_id:
+                seen_bos = True
+
+            if seen_bos and next_token.item() == self.dataset.tokenizer.eos_token_id:
                 break
         
-        output_txt = self.dataset.tokenizer.decode(seq[0, input_len:].tolist(), skip_special_tokens=True)
+        output_seq = seq[0, input_len:]
+        output_txt = self.dataset.tokenizer.decode(output_seq.tolist(), skip_special_tokens=True)
         print(output_txt)
+
+        self.context_string = torch.cat([self.context_string, output_seq])
+        if self.context_string.size(0) > self.max_length:
+            self.context_string = self.context_string[-self.max_length:]
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == 'train':

@@ -1,7 +1,7 @@
 from torch.utils.data import Dataset, DataLoader
 from torch.nn import Module
 import torch.nn as nn
-import torch, math, time, sys, os, platform, datetime, requests, array
+import torch, math, time, sys, os, platform, datetime, requests, array, re
 import numpy as np
 from transformers import AutoTokenizer
 
@@ -63,6 +63,7 @@ class ShakespeareDataset(Dataset):
         ''' Reads training data from TXT file '''
 
         print('[+] Reading training data...')
+        contains_letters = re.compile('[a-zA-Z]+')
         ids = array.array('I')
         start = time.time()
         for folder in TRAINING_DATA:
@@ -71,7 +72,7 @@ class ShakespeareDataset(Dataset):
                 with open(file_path, 'r', encoding='utf-8') as file:
 
                     for row in file:
-                        if not row.strip():
+                        if not contains_letters.search(row):
                             continue
 
                         token_ids = self.tokenizer.encode(row, add_special_tokens=False)
@@ -260,7 +261,7 @@ class TitusModel(Module):
             recent = x[0]
             for i in range(topk.size(1)):
                 if (recent == indices[0, i]).any():
-                    topk[0, i] -= 0.01
+                    topk[0, i] -= 0.05
             
             choice = topk.argmax(dim=-1, keepdim=True)
             next_token = indices.gather(-1, choice)

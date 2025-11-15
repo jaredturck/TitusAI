@@ -267,7 +267,7 @@ class TitusModel(Module):
         output_txt = self.dataset.tokenizer.decode(output_seq.tolist(), skip_special_tokens=True)
         print(output_txt)
 
-        self.context_string = torch.cat([self.context_string, output_seq])
+        self.context_string = torch.cat([self.context_string, new_ids, output_seq])
         if self.context_string.size(0) > self.max_length:
             self.context_string = self.context_string[-self.max_length:]
 

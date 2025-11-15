@@ -48,6 +48,11 @@ class ShakespeareDataset(Dataset):
         self.dataset_len = None
         self.buffer_size = 1024 * 1024 * 16  # 16 MB buffer
 
+        self.tokenizer.add_special_tokens({
+            'eos_token' : '<EOS>',
+            'bos_token' : '<BOS>',
+        })
+
     def __len__(self):
         return self.dataset_len
 
@@ -64,13 +69,13 @@ class ShakespeareDataset(Dataset):
             for filename in os.listdir(folder):
                 file_path = os.path.join(folder, filename)
                 with open(file_path, 'r', encoding='utf-8') as file:
-                    
-                    doc_content = True
-                    while doc_content:
-                        doc_content = file.read(self.buffer_size)
-                        doc_ids = self.tokenizer(doc_content, return_tensors='pt', add_special_tokens=False)\
-                            .input_ids.squeeze(0).cpu().numpy().astype(np.uint32, copy=False)
-                        ids.frombytes(doc_ids.tobytes())
+
+                    for row in file:
+                        if not row.strip():
+                            continue
+
+                        token_ids = self.tokenizer.encode(row, add_special_tokens=False)
+                        ids.extend([self.tokenizer.bos_token_id] + token_ids + [self.tokenizer.eos_token_id])
 
                         if time.time() - start > 10:
                             start = time.time()
@@ -94,7 +99,7 @@ class TitusModel(Module):
         self.dim_feedforward = self.d_model * 4
         self.no_transformer_layers = self.d_model // 128
         self.dropout = 0.1
-        self.embedding_size = self.dataset.tokenizer.vocab_size
+        self.embedding_size = len(self.dataset.tokenizer)
         self.max_length = MAX_LENGTH
         self.max_epochs = 5
         self.context = torch.empty(1, 0, dtype=torch.long, device=DEVICE)
@@ -116,7 +121,7 @@ class TitusModel(Module):
 
         self.adaptive_softmax = nn.AdaptiveLogSoftmaxWithLoss(
             in_features=self.d_model,
-            n_classes=self.dataset.tokenizer.vocab_size,
+            n_classes=self.embedding_size,
             cutoffs=[2000, 10_000],
             div_value=4.0
         )
@@ -239,7 +244,6 @@ class TitusModel(Module):
     def predict(self, text):
 
         seq = self.dataset.tokenizer(text, return_tensors='pt')['input_ids'].to(DEVICE)
-        eod_id = self.dataset.tokenizer.convert_tokens_to_ids('<eod>')
         input_len = seq.size(1)
 
         for _ in range(self.max_length):
@@ -249,7 +253,7 @@ class TitusModel(Module):
             next_token = probs.argmax(dim=-1, keepdim=True)
             seq = torch.cat([seq, next_token], dim=-1)
 
-            if next_token.item() == self.dataset.tokenizer.eos_token_id or next_token.item() == eod_id:
+            if next_token.item() == self.dataset.tokenizer.eos_token_id:
                 break
         
         output_txt = self.dataset.tokenizer.decode(seq[0, input_len:].tolist(), skip_special_tokens=True)

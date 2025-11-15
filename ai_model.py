@@ -24,7 +24,7 @@ if platform.node() == 'Jared-PC':
     ]
     USE_ALL_SAMPLES = False
 else:
-    BATCH_SIZE = 325
+    BATCH_SIZE = 160
     MAX_SAMPLES = 10_000_000
     WEIGHTS_PATH = '/home/jared/TitusAI/weights/'
     TOKENIZER_FILE = '/home/jared/TitusAI/weights/spu_tokenizer'

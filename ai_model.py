@@ -96,7 +96,7 @@ class TitusModel(Module):
         self.dropout = 0.1
         self.embedding_size = self.dataset.tokenizer.vocab_size
         self.max_length = MAX_LENGTH
-        self.max_epochs = 10000
+        self.max_epochs = 5
         self.context = torch.empty(1, 0, dtype=torch.long, device=DEVICE)
         self.sqrt_dmodel = math.sqrt(self.d_model)
         self.dataloader_workers = max(2, os.cpu_count() // 2)

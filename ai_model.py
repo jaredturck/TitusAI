@@ -19,7 +19,6 @@ if platform.node() == 'Jared-PC':
     WEIGHTS_PATH = 'weights/'
     TOKENIZER_FILE = 'weights/spu_tokenizer'
     TRAINING_DATA = [
-        # 'datasets/wiki',
         'datasets/book_dataset'
     ]
     USE_ALL_SAMPLES = False
@@ -29,7 +28,6 @@ else:
     WEIGHTS_PATH = '/home/jared/TitusAI/weights/'
     TOKENIZER_FILE = '/home/jared/TitusAI/weights/spu_tokenizer'
     TRAINING_DATA = [
-        # '/home/jared/TitusAI/datasets/wiki',
         '/home/jared/TitusAI/datasets/book_dataset'
     ]
     USE_ALL_SAMPLES = True

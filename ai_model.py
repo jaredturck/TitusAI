@@ -19,7 +19,8 @@ if platform.node() == 'Jared-PC':
     WEIGHTS_PATH = 'weights/'
     TOKENIZER_FILE = 'weights/spu_tokenizer'
     TRAINING_DATA = [
-        'datasets/book_dataset'
+        # 'datasets/book_dataset',
+        'datasets/falcon_chats'
     ]
     USE_ALL_SAMPLES = False
 else:
@@ -28,7 +29,8 @@ else:
     WEIGHTS_PATH = '/home/jared/TitusAI/weights/'
     TOKENIZER_FILE = '/home/jared/TitusAI/weights/spu_tokenizer'
     TRAINING_DATA = [
-        '/home/jared/TitusAI/datasets/book_dataset'
+        # '/home/jared/TitusAI/datasets/book_dataset',
+        '/home/jared/TitusAI/datasets/falcon_chats'
     ]
     USE_ALL_SAMPLES = True
 
@@ -261,7 +263,7 @@ class TitusModel(Module):
                 if (recent == indices[0, i]).any():
                     topk[0, i] -= 0.05
             
-            choice = topk.argmax(dim=-1, keepdim=True)
+            choice = torch.multinomial(topk.exp(), num_samples=1)
             next_token = indices.gather(-1, choice)
             seq = torch.cat([seq, next_token], dim=-1)
 

@@ -257,12 +257,7 @@ class TitusModel(Module):
             logits = self.forward(x)
             probs = self.adaptive_softmax.log_prob(logits[:, -1, :])
 
-            topk, indices = probs.topk(5, dim=-1)
-            recent = x[0]
-            for i in range(topk.size(1)):
-                if (recent == indices[0, i]).any():
-                    topk[0, i] -= 0.05
-            
+            topk, indices = probs.topk(2, dim=-1)
             choice = torch.multinomial(topk.exp(), num_samples=1)
             next_token = indices.gather(-1, choice)
             seq = torch.cat([seq, next_token], dim=-1)

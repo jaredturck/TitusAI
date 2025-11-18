@@ -20,7 +20,8 @@ if platform.node() == 'Jared-PC':
     TOKENIZER_FILE = 'weights/spu_tokenizer'
     TRAINING_DATA = [
         # 'datasets/book_dataset',
-        'datasets/falcon-distillation/outputs/'
+        'datasets/falcon-distillation/outputs_dataset_1/',
+        'datasets/falcon-distillation/outputs_dataset_2/'
     ]
     USE_ALL_SAMPLES = False
 else:
@@ -30,7 +31,8 @@ else:
     TOKENIZER_FILE = '/home/jared/TitusAI/weights/spu_tokenizer'
     TRAINING_DATA = [
         # '/home/jared/TitusAI/datasets/book_dataset',
-        '/home/jared/TitusAI/datasets/falcon-distillation/outputs/'
+        '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_1/',
+        '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_2/',
     ]
     USE_ALL_SAMPLES = True
 

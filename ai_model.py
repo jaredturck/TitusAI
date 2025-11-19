@@ -9,7 +9,7 @@ os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 STATUS_WEBHOOK = 'https://discord.com/api/webhooks/1431466888956870677/bg5j5IZiG95bqsgQngre_JZm74MtXtgNCcrA_Q7Xe2mTuJ7lxTHe65jYMyJKPvw_Jq2H'
 
 # Configuration
-DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+DEVICE = 'cpu'
 TARGET_LOSS = 1.3
 MAX_LENGTH = 200
 
@@ -24,6 +24,7 @@ if platform.node() == 'Jared-PC':
         'datasets/falcon-distillation/outputs_dataset_2/'
     ]
     USE_ALL_SAMPLES = False
+    DEVICE = 'cuda'
 else:
     BATCH_SIZE = 150
     MAX_SAMPLES = 10_000_000

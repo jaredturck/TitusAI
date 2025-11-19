@@ -168,7 +168,7 @@ class TitusModel(Module):
 
         weights_file = max(files, key=os.path.getctime)
         if os.path.isfile(weights_file):
-            weights_data = torch.load(weights_file)
+            weights_data = torch.load(weights_file, map_location=torch.device(DEVICE))
             if isinstance(weights_data, dict) and 'weights' in weights_data and 'optimizer' in weights_data:
                 self.load_state_dict(weights_data['weights'])
                 if self.optimizer and weights_data['optimizer']:

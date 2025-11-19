@@ -277,11 +277,12 @@ class TitusModel(Module):
             output_seq = output_seq[bos_index - input_len + 1 :]
 
         output_txt = self.dataset.tokenizer.decode(output_seq.tolist(), skip_special_tokens=True)
-        print(output_txt)
 
         self.context_string = torch.cat([self.context_string, new_ids, output_seq])
         if self.context_string.size(0) > self.max_length:
             self.context_string = self.context_string[-self.max_length:]
+        
+        return output_txt
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == 'train':
@@ -298,4 +299,4 @@ if __name__ == "__main__":
         print(f'[+] d_model={model.d_model}, nhead={model.nhead}, dim_feedforward={model.dim_feedforward}, layers={model.no_transformer_layers}')
         while True:
             text = input('> ')
-            model.predict(text)
+            print(model.predict(text))

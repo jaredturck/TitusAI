@@ -159,7 +159,8 @@ class TitusModel(Module):
         }, weights_file)
         print('[+] Model weights saved')
     
-    def load_weights(self):
+    def load_weights(self, weight_path=None):
+        WEIGHTS_PATH = weight_path if weight_path else WEIGHTS_PATH
         files = [os.path.join(WEIGHTS_PATH, file) for file in os.listdir(WEIGHTS_PATH) if file.endswith('.pth')]
         if not files:
             return print('[-] No weights found, starting training from scratch')

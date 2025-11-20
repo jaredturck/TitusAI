@@ -21,7 +21,10 @@ if platform.node() == 'Jared-PC':
     TRAINING_DATA = [
         # 'datasets/book_dataset',
         'datasets/falcon-distillation/outputs_dataset_1/',
-        'datasets/falcon-distillation/outputs_dataset_2/'
+        'datasets/falcon-distillation/outputs_dataset_2/',
+        'datasets/falcon-distillation/outputs_dataset_3/',
+        'datasets/falcon-distillation/outputs_dataset_4/',
+        'datasets/falcon-distillation/outputs_dataset_5/',
     ]
     USE_ALL_SAMPLES = False
 else:
@@ -33,6 +36,9 @@ else:
         # '/home/jared/TitusAI/datasets/book_dataset',
         '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_1/',
         '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_2/',
+        '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_3/',
+        '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_4/',
+        '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_5/',
     ]
     USE_ALL_SAMPLES = True
 

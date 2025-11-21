@@ -210,38 +210,45 @@ class TitusModel(Module):
             save_start = time.time()
             start = time.time()
             for n, batch in enumerate(self.dataloader):
+                try:
 
-                batch = batch.to(DEVICE, non_blocking=True)
-                src = batch[:, :-1]
-                trg = batch[:, 1:]
+                    batch = batch.to(DEVICE, non_blocking=True)
+                    src = batch[:, :-1]
+                    trg = batch[:, 1:]
 
-                self.optimizer.zero_grad()
-                
-                out = self.forward(src)
-                out2d = out.reshape(-1, out.size(-1))
-                tgt1d = trg.reshape(-1)
-
-                out = self.adaptive_softmax(out2d, tgt1d)
-                loss = out.loss
-
-                loss.backward()
-                self.optimizer.step()
-                total_loss += loss.item()
-
-                if time.time() - start > 10:
-                    pcnt = (n+1) / len(self.dataloader) * 100
-                    tps = int((((n+1) - prev_batch_num) * BATCH_SIZE * self.max_length) / (time.time() - start))
-                    start = time.time()
-                    print(f'[+] Epoch {epoch+1} of {self.max_epochs}, loss: {loss.item():.4f}, batch {n+1} of {len(self.dataloader):,}, tps: {tps:,} ({pcnt:.1f}%)')
-                
-                    if time.time() - save_start > 600:
-                        save_start = time.time()
-                        self.save_weights()
-                        send_status(f'[+] Epoch {epoch+1} of {self.max_epochs}, loss: {loss.item():.4f}, batch {n+1} of {len(self.dataloader):,}, '
-                            f'tps: {tps:,} ({pcnt:.1f}%)')
-                        print(f'[+] Saved weights at epoch {epoch+1}, batch {n+1}')
+                    self.optimizer.zero_grad()
                     
-                    prev_batch_num = n+1
+                    out = self.forward(src)
+                    out2d = out.reshape(-1, out.size(-1))
+                    tgt1d = trg.reshape(-1)
+
+                    out = self.adaptive_softmax(out2d, tgt1d)
+                    loss = out.loss
+
+                    loss.backward()
+                    self.optimizer.step()
+                    total_loss += loss.item()
+
+                    if time.time() - start > 10:
+                        pcnt = (n+1) / len(self.dataloader) * 100
+                        tps = int((((n+1) - prev_batch_num) * BATCH_SIZE * self.max_length) / (time.time() - start))
+                        start = time.time()
+                        print(f'[+] Epoch {epoch+1} of {self.max_epochs}, loss: {loss.item():.4f}, batch {n+1} of {len(self.dataloader):,}, tps: {tps:,} ({pcnt:.1f}%)')
+                    
+                        if time.time() - save_start > 600:
+                            save_start = time.time()
+                            self.save_weights()
+                            send_status(f'[+] Epoch {epoch+1} of {self.max_epochs}, loss: {loss.item():.4f}, batch {n+1} of {len(self.dataloader):,}, '
+                                f'tps: {tps:,} ({pcnt:.1f}%)')
+                            print(f'[+] Saved weights at epoch {epoch+1}, batch {n+1}')
+                        
+                        prev_batch_num = n+1
+
+                except torch.cuda.OutOfMemoryError:
+                    print('[error] CUDA out of memory, skipping batch')
+                    send_status('[error] CUDA out of memory, skipping batch')
+                    torch.cuda.empty_cache()
+                    continue
 
             avg_loss = total_loss / len(self.dataloader)
             print(f'[+] Epoch {epoch+1} of {self.max_epochs}, avg loss: {avg_loss:.4f}, time: {time.time()-epoch_start:.2f}s')

@@ -28,7 +28,7 @@ if platform.node() == 'Jared-PC':
     ]
     USE_ALL_SAMPLES = False
 else:
-    BATCH_SIZE = 150
+    BATCH_SIZE = 140
     MAX_SAMPLES = 10_000_000
     WEIGHTS_PATH = '/home/jared/TitusAI/weights/'
     TOKENIZER_FILE = '/home/jared/TitusAI/weights/spu_tokenizer'
@@ -248,6 +248,7 @@ class TitusModel(Module):
                     print('[error] CUDA out of memory, skipping batch')
                     send_status('[error] CUDA out of memory, skipping batch')
                     torch.cuda.empty_cache()
+                    time.sleep(5)
                     continue
 
             avg_loss = total_loss / len(self.dataloader)

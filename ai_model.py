@@ -305,14 +305,16 @@ class TitusModel(Module):
     def cosine_similarity(self, a, b):
         ''' Compute cosine similarity between two Counters '''
         intersection = a.keys() & b.keys()
-        product = sum([a[x] * b[x] for x in intersection])
+        product = sum(a[x] * b[x] for x in intersection)
 
-        sum1 = math.sqrt(sum(x * x for x in a.keys()))
-        sum2 = math.sqrt(sum(x * x for x in b.keys()))
+        sum1 = math.sqrt(sum(v * v for v in a.values()))
+        sum2 = math.sqrt(sum(v * v for v in b.values()))
         return product / (sum1 * sum2) if sum1 and sum2 else 0.0
     
     def think_longer(self, text, k = 10):
         ''' Pick the best answer '''
+
+        original_context = self.context_string.clone()
         
         answers = []
         counters = []
@@ -333,6 +335,14 @@ class TitusModel(Module):
         
         best_idx = max(range(len(avg_sim)), key=lambda i: avg_sim[i])
         best_answer = answers[best_idx]
+
+        text_ids = self.dataset.tokenizer(text, return_tensors='pt')['input_ids'].to(DEVICE)[0]
+        answer_ids = self.dataset.tokenizer(best_answer, return_tensors='pt')['input_ids'].to(DEVICE)[0]
+
+        self.context_string = torch.cat([original_context, text_ids, answer_ids])
+        if self.context_string.size(0) > self.max_length:
+            self.context_string = self.context_string[-self.max_length:]
+
         return best_answer
 
 if __name__ == "__main__":

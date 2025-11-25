@@ -116,6 +116,7 @@ class TitusModel(Module):
         self.dataloader_workers = max(2, os.cpu_count() // 2)
         self.optimizer = None
         self.context_string = torch.empty(0, dtype=torch.long, device=DEVICE)
+        self.weights_file = None
 
         self.register_buffer('pos_arange', torch.arange(self.max_length, device=DEVICE))
         self.register_buffer('full_causal_mask', torch.triu(torch.ones(self.max_length, self.max_length, dtype=torch.bool, device=DEVICE), diagonal=1))
@@ -179,10 +180,12 @@ class TitusModel(Module):
                 if self.optimizer and weights_data['optimizer']:
                     self.optimizer.load_state_dict(weights_data['optimizer'])
                     print('[+] Optimizer state loaded')
+                self.weights_file = os.path.basename(weights_file)
                 print(f'[+] Model weights loaded {weights_file}')
 
             else:
                 self.load_state_dict(weights_data)
+                self.weights_file = os.path.basename(weights_file)
                 print(f'[+] Model weights loaded {weights_file} (optimizer state not found)')
 
     def train_model(self):

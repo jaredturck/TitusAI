@@ -264,7 +264,7 @@ class TitusModel(Module):
                 return
     
     @torch.no_grad()
-    def predict(self, text):
+    def predict(self, text, length_multiplier=1.0):
 
         new_ids = self.dataset.tokenizer(text, return_tensors='pt')['input_ids'].to(DEVICE)[0]
         seq = torch.cat([self.context_string, new_ids], dim=0).unsqueeze(0)
@@ -273,7 +273,7 @@ class TitusModel(Module):
         seen_bos = False
         bos_index = None
 
-        for _ in range(self.max_length):
+        for _ in range(int(self.max_length * length_multiplier)):
             x = seq[:, -self.max_length:]
             logits = self.forward(x)
             probs = self.adaptive_softmax.log_prob(logits[:, -1, :])
@@ -320,7 +320,7 @@ class TitusModel(Module):
         counters = []
         for i in range(k):
             self.context_string = torch.empty(0, dtype=torch.long, device=DEVICE)
-            out = self.predict(text)
+            out = self.predict(text, length_multiplier=1.5)
             ids = self.dataset.tokenizer.encode(out, add_special_tokens=False)
             counters.append(Counter(ids))
             answers.append(out)

@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch, math, time, sys, os, platform, datetime, requests, array, re
 import numpy as np
 from transformers import AutoTokenizer
+from collections import Counter
 
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 STATUS_WEBHOOK = 'https://discord.com/api/webhooks/1431466888956870677/bg5j5IZiG95bqsgQngre_JZm74MtXtgNCcrA_Q7Xe2mTuJ7lxTHe65jYMyJKPvw_Jq2H'
@@ -297,6 +298,39 @@ class TitusModel(Module):
             self.context_string = self.context_string[-self.max_length:]
         
         return output_txt
+    
+    def cosine_similarity(self, a, b):
+        ''' Compute cosine similarity between two Counters '''
+        intersection = a.keys() & b.keys()
+        product = sum([a[x] * b[x] for x in intersection])
+
+        sum1 = math.sqrt(sum(x * x for x in a.keys()))
+        sum2 = math.sqrt(sum(x * x for x in b.keys()))
+        return product / (sum1 * sum2) if sum1 and sum2 else 0.0
+    
+    def think_longer(self, text, k = 10):
+        ''' Pick the best answer '''
+        
+        answers = []
+        counters = []
+        for i in range(k):
+            self.context_string = torch.empty(0, dtype=torch.long, device=DEVICE)
+            out = self.predict(text)
+            ids = self.dataset.tokenizer.encode(out, add_special_tokens=False)
+            counters.append(Counter(ids))
+            answers.append(out)
+        
+        avg_sim = []
+        for i in range(len(answers)):
+            sims = []
+            for j in range(len(answers)):
+                if i != j:
+                    sims.append(self.cosine_similarity(counters[i], counters[j]))
+            avg_sim.append(sum(sims) / len(sims))
+        
+        best_idx = max(range(len(avg_sim)), key=lambda i: avg_sim[i])
+        best_answer = answers[best_idx]
+        return best_answer
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == 'train':
@@ -313,4 +347,5 @@ if __name__ == "__main__":
         print(f'[+] d_model={model.d_model}, nhead={model.nhead}, dim_feedforward={model.dim_feedforward}, layers={model.no_transformer_layers}')
         while True:
             text = input('> ')
-            print(model.predict(text))
+            # print(model.predict(text))
+            print(model.think_longer(text))

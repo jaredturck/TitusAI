@@ -21,11 +21,12 @@ if platform.node() == 'Jared-PC':
     TOKENIZER_FILE = 'weights/spu_tokenizer'
     TRAINING_DATA = [
         # 'datasets/book_dataset',
-        'datasets/falcon-distillation/outputs_dataset_1/',
-        'datasets/falcon-distillation/outputs_dataset_2/',
-        'datasets/falcon-distillation/outputs_dataset_3/',
-        'datasets/falcon-distillation/outputs_dataset_4/',
-        'datasets/falcon-distillation/outputs_dataset_5/',
+        # 'datasets/falcon-distillation/outputs_dataset_1/',
+        # 'datasets/falcon-distillation/outputs_dataset_2/',
+        # 'datasets/falcon-distillation/outputs_dataset_3/',
+        # 'datasets/falcon-distillation/outputs_dataset_4/',
+        # 'datasets/falcon-distillation/outputs_dataset_5/',
+        'datasets/chatgpt-questions/falcon_outputs'
     ]
     USE_ALL_SAMPLES = False
 else:
@@ -35,11 +36,12 @@ else:
     TOKENIZER_FILE = '/home/jared/TitusAI/weights/spu_tokenizer'
     TRAINING_DATA = [
         # '/home/jared/TitusAI/datasets/book_dataset',
-        '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_1/',
-        '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_2/',
-        '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_3/',
-        '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_4/',
-        '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_5/',
+        # '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_1/',
+        # '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_2/',
+        # '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_3/',
+        # '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_4/',
+        # '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_5/',
+        '/home/jared/TitusAI/datasets/chatgpt-questions/falcon_outputs'
     ]
     USE_ALL_SAMPLES = True
 
@@ -361,4 +363,4 @@ if __name__ == "__main__":
         while True:
             text = input('> ')
             # print(model.predict(text))
-            print(model.think_longer(text))
+            print(model.think_longer(text, k=10))

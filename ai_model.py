@@ -313,7 +313,7 @@ class TitusModel(Module):
         sum2 = math.sqrt(sum(v * v for v in b.values()))
         return product / (sum1 * sum2) if sum1 and sum2 else 0.0
     
-    def think_longer(self, text, k = 10):
+    def think_longer(self, text, k = 3):
         ''' Pick the best answer '''
 
         original_context = self.context_string.clone()

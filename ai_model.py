@@ -280,7 +280,7 @@ class TitusModel(Module):
                 self.save_weights()
                 return
     
-    def sample_next_token(self, probs, temperature=1.0, top_k=5, top_p=0.9):
+    def sample_next_token(self, probs, temperature, top_k, top_p):
 
         if temperature <= 0.0:
             return probs.argmax(dim=-1, keepdim=True)
@@ -308,7 +308,7 @@ class TitusModel(Module):
             return torch.multinomial(probs, num_samples=1)
 
     @torch.no_grad()
-    def predict(self, text, length_multiplier=1.0, temperature=0.8, top_k=5, top_p=0.9):
+    def predict(self, text, length_multiplier=1.0, temperature=0.6, top_k=50, top_p=0.9):
 
         prompt = f'Q: {text}\nA: '
         seq = self.dataset.tokenizer(prompt, return_tensors='pt')['input_ids'].to(DEVICE)

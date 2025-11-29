@@ -342,12 +342,12 @@ class TitusModel(Module):
             item = next_token.item()
 
             if item == self.dataset.tokenizer.eos_token_id:
-                if len(generated_ids) >= 10:
+                if re.search(r'[a-zA-Z0-9]', output_txt):
                     break
                 continue
             
             token_text = self.dataset.tokenizer.decode([item], skip_special_tokens=True)
-            if token_text.strip() == '':
+            if token_text.strip() == '' and not re.search(r'[a-zA-Z0-9]', output_txt):
                 generated_ids.append(item)
                 continue
 

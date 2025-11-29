@@ -135,7 +135,6 @@ class TitusModel(Module):
         self.sqrt_dmodel = math.sqrt(self.d_model)
         self.dataloader_workers = max(2, os.cpu_count() // 2)
         self.optimizer = None
-        self.context_string = torch.empty(0, dtype=torch.long, device=DEVICE)
         self.weights_file = None
         self.training_started = False
 
@@ -312,10 +311,10 @@ class TitusModel(Module):
     def predict(self, text, length_multiplier=1.0):
         
         prompt = f'Q: {text}\nA: '
-        new_ids = self.dataset.tokenizer(prompt, return_tensors='pt')['input_ids'].to(DEVICE)[0]
-        seq = torch.cat([self.context_string, new_ids], dim=0).unsqueeze(0)
+        seq = self.dataset.tokenizer(prompt, return_tensors='pt')['input_ids'].to(DEVICE)
 
         input_len = seq.size(1)
+        output_txt = ''
 
         for _ in range(int(self.max_length * length_multiplier)):
             x = seq[:, -self.max_length:]
@@ -325,15 +324,11 @@ class TitusModel(Module):
             next_token = self.sample_next_token(probs, temperature=0.8, top_k=5, top_p=0.9)
             seq = torch.cat([seq, next_token], dim=-1)
 
-            if next_token.item() == self.dataset.tokenizer.eos_token_id:
-                break
-        
-        output_seq = seq[0, input_len:]
-        output_txt = self.dataset.tokenizer.decode(output_seq.tolist(), skip_special_tokens=True)
+            item = next_token.item()
+            output_txt += self.dataset.tokenizer.decode([item], skip_special_tokens=True)
 
-        self.context_string = torch.cat([self.context_string, new_ids, output_seq])
-        if self.context_string.size(0) > self.max_length:
-            self.context_string = self.context_string[-self.max_length:]
+            if re.match('[a-z0-9 ]+', output_txt) and item == self.dataset.tokenizer.eos_token_id:
+                break
         
         return output_txt.strip()
     
@@ -354,7 +349,6 @@ class TitusModel(Module):
         answers = []
         counters = []
         for i in range(k):
-            self.context_string = torch.empty(0, dtype=torch.long, device=DEVICE)
             out = self.predict(text, length_multiplier=1.5)
             ids = self.dataset.tokenizer.encode(out, add_special_tokens=False)
             counters.append(Counter(ids))
@@ -370,13 +364,6 @@ class TitusModel(Module):
         
         best_idx = max(range(len(avg_sim)), key=lambda i: avg_sim[i])
         best_answer = answers[best_idx]
-
-        text_ids = self.dataset.tokenizer(text, return_tensors='pt')['input_ids'].to(DEVICE)[0]
-        answer_ids = self.dataset.tokenizer(best_answer, return_tensors='pt')['input_ids'].to(DEVICE)[0]
-
-        self.context_string = torch.cat([original_context, text_ids, answer_ids])
-        if self.context_string.size(0) > self.max_length:
-            self.context_string = self.context_string[-self.max_length:]
 
         return best_answer
 

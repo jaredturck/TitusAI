@@ -2,3 +2,4 @@ torch
 beautifulsoup4
 transformers
 sentencepiece
+python-dotenv

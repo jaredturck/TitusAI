@@ -2,19 +2,21 @@ from torch.utils.data import Dataset, DataLoader
 from torch.nn import Module
 import torch.nn as nn
 import torch, math, time, sys, os, platform, datetime, requests, array, re
-import numpy as np
 from transformers import AutoTokenizer
 from collections import Counter
+from dotenv import load_dotenv
+
+load_dotenv()
 
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
-STATUS_WEBHOOK = 'https://discord.com/api/webhooks/1431466888956870677/bg5j5IZiG95bqsgQngre_JZm74MtXtgNCcrA_Q7Xe2mTuJ7lxTHe65jYMyJKPvw_Jq2H'
+STATUS_WEBHOOK = os.getenv('STATUS_WEBHOOK')
 
 # Configuration
-DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 TARGET_LOSS = 1.3
 MAX_LENGTH = 200
 
 if platform.node() == 'Jared-PC':
+    DEVICE = 'cuda'
     BATCH_SIZE = 28
     MAX_SAMPLES = 100_000
     WEIGHTS_PATH = 'weights/'
@@ -29,7 +31,9 @@ if platform.node() == 'Jared-PC':
         'datasets/chatgpt-questions/falcon_outputs'
     ]
     USE_ALL_SAMPLES = False
-else:
+
+elif platform.node() == 'Jared-server':
+    DEVICE = 'cuda:0'
     BATCH_SIZE = 140
     MAX_SAMPLES = 10_000_000
     WEIGHTS_PATH = '/home/jared/TitusAI/weights/'
@@ -45,10 +49,16 @@ else:
     ]
     USE_ALL_SAMPLES = True
 
+else:
+    DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+    BATCH_SIZE = 1
+    MAX_SAMPLES = 1
+
 def send_status(message):
     ''' Sends a status update to the Discord webhook '''
     try:
         requests.post(STATUS_WEBHOOK, json={'content': message})
+        print(message)
     except Exception as e:
         print(f'[error] Failed to send status update: {e}')
 
@@ -86,9 +96,16 @@ class ShakespeareDataset(Dataset):
                         if not contains_letters.search(row):
                             continue
 
-                        token_ids = self.tokenizer.encode(row, add_special_tokens=False)
-                        ids.extend([self.tokenizer.bos_token_id] + token_ids + [self.tokenizer.eos_token_id])
+                        if row == '[BOS]\n':
+                            ids.extend([self.tokenizer.bos_token_id])
 
+                        elif row == '[EOS]\n':
+                            ids.extend([self.tokenizer.eos_token_id])
+
+                        else:
+                            token_ids = self.tokenizer.encode(row, add_special_tokens=False)
+                            ids.extend(token_ids)
+                            
                         if time.time() - start > 10:
                             start = time.time()
                             print(f'[+] Processed {len(ids):,} tokens')
@@ -120,6 +137,7 @@ class TitusModel(Module):
         self.optimizer = None
         self.context_string = torch.empty(0, dtype=torch.long, device=DEVICE)
         self.weights_file = None
+        self.training_started = False
 
         self.register_buffer('pos_arange', torch.arange(self.max_length, device=DEVICE))
         self.register_buffer('full_causal_mask', torch.triu(torch.ones(self.max_length, self.max_length, dtype=torch.bool, device=DEVICE), diagonal=1))
@@ -203,13 +221,11 @@ class TitusModel(Module):
             self.dataset, batch_size=BATCH_SIZE, shuffle=True, pin_memory=True, num_workers=self.dataloader_workers,
             persistent_workers=True, prefetch_factor=4
         )
-
         prev_batch_num = 0
 
-        send_status(f'[+] Starting training, d_model={self.d_model}, nhead={self.nhead}, dim_feedforward={self.dim_feedforward}, '
-            f'layers={self.no_transformer_layers}, batch_size={BATCH_SIZE}, embedding_size={self.embedding_size}')
-        print(f'[+] Starting training, d_model={self.d_model}, nhead={self.nhead}, dim_feedforward={self.dim_feedforward}, '
-            f'layers={self.no_transformer_layers}, batch_size={BATCH_SIZE}, embedding_size={self.embedding_size}')
+        send_status(f'[+] Starting training ({torch.cuda.get_device_name(DEVICE)}), d_model={self.d_model}, nhead={self.nhead}, '
+            f'dim_feedforward={self.dim_feedforward}, layers={self.no_transformer_layers}, batch_size={BATCH_SIZE}, embedding_size={self.embedding_size}')
+        self.training_started = True
         for epoch in range(self.max_epochs):
             total_loss = 0.0
             epoch_start = time.time()
@@ -354,7 +370,10 @@ if __name__ == "__main__":
             model.train_model()
             
         except KeyboardInterrupt:
-            model.save_weights()
+            if model.training_started:
+                model.save_weights()
+            else:
+                print('[-] Training was not started, no weights to save')
     else:
         model = TitusModel().to(DEVICE)
         model.load_weights()

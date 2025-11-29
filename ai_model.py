@@ -325,37 +325,43 @@ class TitusModel(Module):
             return torch.multinomial(probs, num_samples=1)
 
     @torch.no_grad()
-    def predict(self, text, length_multiplier=1.0, temperature=0.6, top_k=50, top_p=0.9, repetition_penalty=1.2):
+    def generate_k(self, text, length_multiplier, temperature, top_k, top_p, repetition_penalty, k):
 
         prompt = f'Q: {text}\nA: '
-        seq = self.dataset.tokenizer(prompt, return_tensors='pt')['input_ids'].to(DEVICE)
-        output_txt = ''
-        generated_ids = []
+        base_seq = self.dataset.tokenizer(prompt, return_tensors='pt')['input_ids'].to(DEVICE)
+        answers = []
 
-        for step in range(int(self.max_length * length_multiplier)):
-            x = seq[:, -self.max_length:]
-            logits = self.forward(x)
-            probs = self.adaptive_softmax.log_prob(logits[:, -1, :])
+        for _ in range(k):
+            seq = base_seq.clone()
+            output_txt = ''
+            generated_ids = []
 
-            probs = self.repetition_penalty(probs, generated_ids, repetition_penalty)
-            next_token = self.sample_next_token(probs, temperature=temperature, top_k=top_k, top_p=top_p)
-            item = next_token.item()
+            for step in range(int(self.max_length * length_multiplier)):
+                x = seq[:, -self.max_length:]
+                logits = self.forward(x)
+                probs = self.adaptive_softmax.log_prob(logits[:, -1, :])
 
-            if item == self.dataset.tokenizer.eos_token_id:
-                if re.search(r'[a-zA-Z0-9]', output_txt):
-                    break
-                continue
-            
-            token_text = self.dataset.tokenizer.decode([item], skip_special_tokens=True)
-            if token_text.strip() == '' and not re.search(r'[a-zA-Z0-9]', output_txt):
+                probs = self.repetition_penalty(probs, generated_ids, repetition_penalty)
+                next_token = self.sample_next_token(probs, temperature=temperature, top_k=top_k, top_p=top_p)
+                item = next_token.item()
+
+                if item == self.dataset.tokenizer.eos_token_id:
+                    if re.search(r'[a-zA-Z0-9]', output_txt):
+                        break
+                    continue
+                
+                token_text = self.dataset.tokenizer.decode([item], skip_special_tokens=True)
+                if token_text.strip() == '' and not re.search(r'[a-zA-Z0-9]', output_txt):
+                    generated_ids.append(item)
+                    continue
+
+                seq = torch.cat([seq, next_token], dim=-1)
+                output_txt += token_text
                 generated_ids.append(item)
-                continue
-
-            seq = torch.cat([seq, next_token], dim=-1)
-            output_txt += token_text
-            generated_ids.append(item)
+            
+            answers.append(output_txt.strip())
         
-        return output_txt.strip()
+        return answers
     
     def cosine_similarity(self, a, b):
         ''' Compute cosine similarity between two Counters '''
@@ -366,16 +372,21 @@ class TitusModel(Module):
         sum2 = math.sqrt(sum(v * v for v in b.values()))
         return product / (sum1 * sum2) if sum1 and sum2 else 0.0
     
+    def predict(self, text, length_multiplier=1.0, temperature=0.6, top_k=50, top_p=0.9, repetition_penalty=1.2):
+        ''' Generate single answer '''
+
+        answer = self.generate_k(text, length_multiplier, temperature, top_k, top_p, repetition_penalty, k=1)
+        return answer[0]
+    
     def think_longer(self, text, k = 3):
         ''' Pick the best answer '''
 
-        answers = []
+        answers = self.generate_k(text, length_multiplier=1.0, temperature=0.6, top_k=50, top_p=0.9, repetition_penalty=1.2, k=k)
+
         counters = []
-        for i in range(k):
-            out = self.predict(text, length_multiplier=1.5)
-            ids = self.dataset.tokenizer.encode(out, add_special_tokens=False)
+        for answer in answers:
+            ids = self.dataset.tokenizer.encode(answer, add_special_tokens=False)
             counters.append(Counter(ids))
-            answers.append(out)
         
         avg_sim = []
         for i in range(len(answers)):
@@ -408,5 +419,5 @@ if __name__ == "__main__":
         print(f'[+] d_model={model.d_model}, nhead={model.nhead}, dim_feedforward={model.dim_feedforward}, layers={model.no_transformer_layers}')
         while True:
             text = input('> ')
-            print(model.predict(text))
-            # print(model.think_longer(text, k=3))
+            # print(model.predict(text))
+            print(model.think_longer(text, k=3))

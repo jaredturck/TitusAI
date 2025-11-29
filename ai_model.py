@@ -308,27 +308,27 @@ class TitusModel(Module):
             return torch.multinomial(probs, num_samples=1)
 
     @torch.no_grad()
-    def predict(self, text, length_multiplier=1.0):
-        
+    def predict(self, text, length_multiplier=1.0, temperature=0.8, top_k=5, top_p=0.9):
+
         prompt = f'Q: {text}\nA: '
         seq = self.dataset.tokenizer(prompt, return_tensors='pt')['input_ids'].to(DEVICE)
-
-        input_len = seq.size(1)
         output_txt = ''
 
-        for _ in range(int(self.max_length * length_multiplier)):
+        for step in range(int(self.max_length * length_multiplier)):
             x = seq[:, -self.max_length:]
             logits = self.forward(x)
             probs = self.adaptive_softmax.log_prob(logits[:, -1, :])
 
-            next_token = self.sample_next_token(probs, temperature=0.8, top_k=5, top_p=0.9)
-            seq = torch.cat([seq, next_token], dim=-1)
-
+            next_token = self.sample_next_token(probs, temperature=temperature, top_k=top_k, top_p=top_p)
             item = next_token.item()
-            output_txt += self.dataset.tokenizer.decode([item], skip_special_tokens=True)
 
-            if re.match('[a-z0-9 ]+', output_txt) and item == self.dataset.tokenizer.eos_token_id:
-                break
+            if item == self.dataset.tokenizer.eos_token_id:
+                if step >= 10:
+                    break
+                continue
+
+            seq = torch.cat([seq, next_token], dim=-1)
+            output_txt += self.dataset.tokenizer.decode([item], skip_special_tokens=True)
         
         return output_txt.strip()
     
@@ -344,8 +344,6 @@ class TitusModel(Module):
     def think_longer(self, text, k = 3):
         ''' Pick the best answer '''
 
-        original_context = self.context_string.clone()
-        
         answers = []
         counters = []
         for i in range(k):

@@ -280,6 +280,23 @@ class TitusModel(Module):
                 self.save_weights()
                 return
     
+    def repetition_penalty(self, probs, generated, penalty):
+        if penalty <= 1.0:
+            return probs
+        
+        probs = probs.clone()
+
+        ids_tensor = torch.tensor(generated, device=probs.device)
+        unique_ids, counts = torch.unique(ids_tensor, return_counts=True)
+
+        unique_ids = unique_ids[unique_ids != self.dataset.tokenizer.eos_token_id]
+        counts = counts[unique_ids != self.dataset.tokenizer.eos_token_id] if unique_ids.numel() > 0 else counts
+
+        if unique_ids.numel() > 0:
+            probs[0, unique_ids] -= counts.float() * math.log(penalty)
+        
+        return probs
+    
     def sample_next_token(self, probs, temperature, top_k, top_p):
 
         if temperature <= 0.0:
@@ -308,27 +325,35 @@ class TitusModel(Module):
             return torch.multinomial(probs, num_samples=1)
 
     @torch.no_grad()
-    def predict(self, text, length_multiplier=1.0, temperature=0.6, top_k=50, top_p=0.9):
+    def predict(self, text, length_multiplier=1.0, temperature=0.6, top_k=50, top_p=0.9, repetition_penalty=1.2):
 
         prompt = f'Q: {text}\nA: '
         seq = self.dataset.tokenizer(prompt, return_tensors='pt')['input_ids'].to(DEVICE)
         output_txt = ''
+        generated_ids = []
 
         for step in range(int(self.max_length * length_multiplier)):
             x = seq[:, -self.max_length:]
             logits = self.forward(x)
             probs = self.adaptive_softmax.log_prob(logits[:, -1, :])
 
+            probs = self.repetition_penalty(probs, generated_ids, repetition_penalty)
             next_token = self.sample_next_token(probs, temperature=temperature, top_k=top_k, top_p=top_p)
             item = next_token.item()
 
             if item == self.dataset.tokenizer.eos_token_id:
-                if step >= 10:
+                if len(generated_ids) >= 10:
                     break
+                continue
+            
+            token_text = self.dataset.tokenizer.decode([item], skip_special_tokens=True)
+            if token_text.strip() == '':
+                generated_ids.append(item)
                 continue
 
             seq = torch.cat([seq, next_token], dim=-1)
-            output_txt += self.dataset.tokenizer.decode([item], skip_special_tokens=True)
+            output_txt += token_text
+            generated_ids.append(item)
         
         return output_txt.strip()
     

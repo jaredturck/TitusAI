@@ -281,44 +281,61 @@ class TitusModel(Module):
                 self.save_weights()
                 return
     
+    def sample_next_token(self, probs, temperature=1.0, top_k=5, top_p=0.9):
+
+        if temperature <= 0.0:
+            return probs.argmax(dim=-1, keepdim=True)
+        
+        log_probs = probs / temperature
+        if top_k > 0:
+            values, _ = torch.topk(log_probs, top_k, dim=-1)
+            log_probs = torch.where(log_probs < values[..., -1, None], torch.full_like(log_probs, float('-inf')), log_probs)
+        
+        probs = torch.softmax(log_probs, dim=-1)
+        if 0.0 < top_p < 1.0:
+            sorted_probs, sorted_indices = torch.sort(probs, descending=True, dim=-1)
+            cumulative = torch.cumsum(sorted_probs, dim=-1)
+
+            mask = cumulative > top_p
+            mask[..., 0] = False
+            sorted_probs = sorted_probs.masked_fill(mask, 0.0)
+            sorted_probs = sorted_probs / sorted_probs.sum(dim=-1, keepdim=True)
+
+            idx = torch.multinomial(sorted_probs, num_samples=1)
+            next_token = sorted_indices.gather(-1, idx)
+            return next_token
+        
+        else:
+            return torch.multinomial(probs, num_samples=1)
+
     @torch.no_grad()
     def predict(self, text, length_multiplier=1.0):
-
-        new_ids = self.dataset.tokenizer(text, return_tensors='pt')['input_ids'].to(DEVICE)[0]
+        
+        prompt = f'Q: {text}\nA: '
+        new_ids = self.dataset.tokenizer(prompt, return_tensors='pt')['input_ids'].to(DEVICE)[0]
         seq = torch.cat([self.context_string, new_ids], dim=0).unsqueeze(0)
 
         input_len = seq.size(1)
-        seen_bos = False
-        bos_index = None
 
         for _ in range(int(self.max_length * length_multiplier)):
             x = seq[:, -self.max_length:]
             logits = self.forward(x)
             probs = self.adaptive_softmax.log_prob(logits[:, -1, :])
 
-            topk, indices = probs.topk(2, dim=-1)
-            choice = torch.multinomial(topk.exp(), num_samples=1)
-            next_token = indices.gather(-1, choice)
+            next_token = self.sample_next_token(probs, temperature=0.8, top_k=5, top_p=0.9)
             seq = torch.cat([seq, next_token], dim=-1)
 
-            if not seen_bos and next_token.item() == self.dataset.tokenizer.bos_token_id:
-                seen_bos = True
-                bos_index = seq.size(1) - 1
-
-            if seen_bos and next_token.item() == self.dataset.tokenizer.eos_token_id:
+            if next_token.item() == self.dataset.tokenizer.eos_token_id:
                 break
         
         output_seq = seq[0, input_len:]
-        if bos_index:
-            output_seq = output_seq[bos_index - input_len + 1 :]
-
         output_txt = self.dataset.tokenizer.decode(output_seq.tolist(), skip_special_tokens=True)
 
         self.context_string = torch.cat([self.context_string, new_ids, output_seq])
         if self.context_string.size(0) > self.max_length:
             self.context_string = self.context_string[-self.max_length:]
         
-        return output_txt
+        return output_txt.strip()
     
     def cosine_similarity(self, a, b):
         ''' Compute cosine similarity between two Counters '''
@@ -381,5 +398,5 @@ if __name__ == "__main__":
         print(f'[+] d_model={model.d_model}, nhead={model.nhead}, dim_feedforward={model.dim_feedforward}, layers={model.no_transformer_layers}')
         while True:
             text = input('> ')
-            # print(model.predict(text))
-            print(model.think_longer(text, k=10))
+            print(model.predict(text))
+            # print(model.think_longer(text, k=3))

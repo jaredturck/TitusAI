@@ -306,6 +306,28 @@ class TitusModel(Module):
         
         return probs
     
+    def repeat_ngram_penalty(self, log_probs, seq, cur_len, no_repeat_ngram_size):
+        n = no_repeat_ngram_size
+        if n is None or n <= 1 or cur_len < n:
+            return log_probs
+        
+        tokens = seq[:cur_len]
+        context = tokens[-(n-1):]
+        banned = set()
+
+        for idx in range(0, cur_len - n + 1):
+            window = tokens[idx:idx + n - 1]
+            if torch.equal(window, context):
+                next_token_id = int(tokens[idx + n - 1].item())
+                banned.add(next_token_id)
+        
+        if not banned:
+            return log_probs
+        
+        lp = log_probs.clone()
+        lp[0, list(banned)] = float('-inf')
+        return lp
+    
     def sample_next_token(self, probs, temperature, top_k, top_p):
 
         if temperature <= 0.0:
@@ -334,7 +356,7 @@ class TitusModel(Module):
             return torch.multinomial(probs, num_samples=1)
 
     @torch.no_grad()
-    def generate_k(self, text, length_multiplier, temperature, top_k, top_p, repetition_penalty, k):
+    def generate_k(self, text, length_multiplier, temperature, top_k, top_p, repetition_penalty, no_repeat_ngram_size, k):
 
         prompt = f'Q: {text}\nA: '
         base_seq = self.dataset.tokenizer(prompt, return_tensors='pt')['input_ids'].to(DEVICE)
@@ -376,6 +398,7 @@ class TitusModel(Module):
                     continue
 
                 lp_i = self.repetition_penalty(log_probs[i:i+1, :], generated_ids[i], repetition_penalty)
+                lp_i = self.repeat_ngram_penalty(lp_i, seq[i], lengths[i], no_repeat_ngram_size)
                 next_token = self.sample_next_token(lp_i, temperature=temperature, top_k=top_k, top_p=top_p)
                 item = next_token.item()
 
@@ -411,17 +434,17 @@ class TitusModel(Module):
         sum2 = math.sqrt(sum(v * v for v in b.values()))
         return product / (sum1 * sum2) if sum1 and sum2 else 0.0
     
-    def predict(self, text, length_multiplier=1.0, temperature=0.6, top_k=50, top_p=0.9, repetition_penalty=1.2):
+    def predict(self, text, length_multiplier=1.0, temperature=0.4, top_k=30, top_p=0.8, repetition_penalty=1.1, no_repeat_ngram_size=4):
         ''' Generate single answer '''
 
-        answer = self.generate_k(text, length_multiplier, temperature, top_k, top_p, repetition_penalty, k=1)
+        answer = self.generate_k(text, length_multiplier, temperature, top_k, top_p, repetition_penalty, no_repeat_ngram_size, k=1)
         return answer[0]
     
     @timeit
     def think_longer(self, text, k = 3):
         ''' Pick the best answer '''
 
-        answers = self.generate_k(text, length_multiplier=1.0, temperature=0.6, top_k=50, top_p=0.9, repetition_penalty=1.2, k=k)
+        answers = self.generate_k(text, length_multiplier=1.0, temperature=0.6, top_k=50, top_p=0.9, repetition_penalty=1.2, no_repeat_ngram_size=4, k=k)
 
         counters = []
         for answer in answers:

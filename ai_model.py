@@ -62,6 +62,15 @@ def send_status(message):
     except Exception as e:
         print(f'[error] Failed to send status update: {e}')
 
+def timeit(func):
+    def wrapper(*args, **kwargs):
+        start = time.time()
+        result = func(*args, **kwargs)
+        end = time.time()
+        print(f'[+][{func.__name__}] took {end - start:.2f} seconds')
+        return result
+    return wrapper
+
 class ShakespeareDataset(Dataset):
     def __init__(self):
         self.max_length = MAX_LENGTH
@@ -329,40 +338,82 @@ class TitusModel(Module):
 
         prompt = f'Q: {text}\nA: '
         base_seq = self.dataset.tokenizer(prompt, return_tensors='pt')['input_ids'].to(DEVICE)
-        answers = []
+        prompt_len = base_seq.size(1)
+        max_steps = int(self.max_length * length_multiplier)
+        total_max_length = prompt_len + max_steps
+        eos_id = self.dataset.tokenizer.eos_token_id
 
-        for _ in range(k):
-            seq = base_seq.clone()
-            output_txt = ''
-            generated_ids = []
+        seq = torch.full((k, total_max_length), fill_value=eos_id, dtype=torch.long, device=DEVICE)
+        seq[:, :prompt_len] = base_seq.expand(k, -1)
 
-            for step in range(int(self.max_length * length_multiplier)):
-                x = seq[:, -self.max_length:]
-                logits = self.forward(x)
-                probs = self.adaptive_softmax.log_prob(logits[:, -1, :])
+        lengths = [prompt_len for i in range(k)]
+        outputs = ['' for i in range(k)]
+        generated_ids = [[] for i in range(k)]
+        finished = [False for i in range(k)]
 
-                probs = self.repetition_penalty(probs, generated_ids, repetition_penalty)
-                next_token = self.sample_next_token(probs, temperature=temperature, top_k=top_k, top_p=top_p)
+        for step in range(max_steps):
+            if all(finished):
+                break
+
+            ctx_starts = []
+            ctx_lens = []
+
+            for i in range(k):
+                L_i = lengths[i]
+                ctx_start = max(0, L_i - self.max_length)
+                ctx_len = L_i - ctx_start
+                ctx_starts.append(ctx_start)
+                ctx_lens.append(ctx_len)
+            
+            max_ctx_len = max(ctx_lens)
+
+            x = torch.empty((k, max_ctx_len), dtype=torch.long, device=DEVICE)
+
+            for i in range(k):
+                ctx_start = ctx_starts[i]
+                ctx_len = ctx_lens[i]
+                x[i, :ctx_len] = seq[i, ctx_start:ctx_start + ctx_len]
+                if ctx_len < max_ctx_len:
+                    x[i, ctx_len:] = eos_id
+            
+            logits = self.forward(x)
+            last_indices = torch.tensor([l - 1 for l in ctx_lens], device=DEVICE)
+            last_hidden = logits[torch.arange(k, device=DEVICE), last_indices, :]
+            log_probs = self.adaptive_softmax.log_prob(last_hidden)
+
+            for i in range(k):
+                if finished[i]:
+                    continue
+
+                lp_i = log_probs[i:i+1, :]
+                lp_i = self.repetition_penalty(lp_i, generated_ids[i], repetition_penalty)
+                next_token = self.sample_next_token(lp_i, temperature=temperature, top_k=top_k, top_p=top_p)
                 item = next_token.item()
 
-                if item == self.dataset.tokenizer.eos_token_id:
-                    if re.search(r'[a-zA-Z0-9]', output_txt):
-                        break
-                    continue
-                
-                token_text = self.dataset.tokenizer.decode([item], skip_special_tokens=True)
-                if token_text.strip() == '' and not re.search(r'[a-zA-Z0-9]', output_txt):
-                    generated_ids.append(item)
+                if item == eos_id:
+                    if re.search(r'[a-zA-Z0-9]', outputs[i]):
+                        finished[i] = True
                     continue
 
-                seq = torch.cat([seq, next_token], dim=-1)
-                output_txt += token_text
-                generated_ids.append(item)
-            
-            answers.append(output_txt.strip())
+                token_text = self.dataset.tokenizer.decode([item], skip_special_tokens=True)
+
+                if token_text.strip() == '' and not re.search(r'[a-zA-Z0-9]', outputs[i]):
+                    generated_ids[i].append(item)
+                    continue
+
+                if lengths[i] >= total_max_length:
+                    finished[i] = True
+                    continue
+
+                pos = lengths[i]
+                seq[i, pos] = item
+                lengths[i] += 1
+
+                outputs[i] += token_text
+                generated_ids[i].append(item)
         
-        return answers
-    
+        return [out.strip() for out in outputs]
+
     def cosine_similarity(self, a, b):
         ''' Compute cosine similarity between two Counters '''
         intersection = a.keys() & b.keys()
@@ -378,6 +429,7 @@ class TitusModel(Module):
         answer = self.generate_k(text, length_multiplier, temperature, top_k, top_p, repetition_penalty, k=1)
         return answer[0]
     
+    @timeit
     def think_longer(self, text, k = 3):
         ''' Pick the best answer '''
 
@@ -420,4 +472,4 @@ if __name__ == "__main__":
         while True:
             text = input('> ')
             # print(model.predict(text))
-            print(model.think_longer(text, k=3))
+            print(model.think_longer(text, k=10))

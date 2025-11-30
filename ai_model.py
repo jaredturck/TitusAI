@@ -351,33 +351,23 @@ class TitusModel(Module):
         generated_ids = [[] for i in range(k)]
         finished = [False for i in range(k)]
 
+        x = torch.empty((k, self.max_length), dtype=torch.long, device=DEVICE)
+        last_indices = torch.empty(k, dtype=torch.long, device=DEVICE)
+
         for step in range(max_steps):
             if all(finished):
                 break
 
-            ctx_starts = []
-            ctx_lens = []
-
             for i in range(k):
                 L_i = lengths[i]
-                ctx_start = max(0, L_i - self.max_length)
-                ctx_len = L_i - ctx_start
-                ctx_starts.append(ctx_start)
-                ctx_lens.append(ctx_len)
-            
-            max_ctx_len = max(ctx_lens)
-
-            x = torch.empty((k, max_ctx_len), dtype=torch.long, device=DEVICE)
-
-            for i in range(k):
-                ctx_start = ctx_starts[i]
-                ctx_len = ctx_lens[i]
-                x[i, :ctx_len] = seq[i, ctx_start:ctx_start + ctx_len]
-                if ctx_len < max_ctx_len:
+                ctx_len = min(L_i, self.max_length)
+                x[i, :ctx_len] = seq[i, L_i - ctx_len:L_i]
+                if ctx_len < self.max_length:
                     x[i, ctx_len:] = eos_id
+                
+                last_indices[i] = ctx_len - 1
             
             logits = self.forward(x)
-            last_indices = torch.tensor([l - 1 for l in ctx_lens], device=DEVICE)
             last_hidden = logits[torch.arange(k, device=DEVICE), last_indices, :]
             log_probs = self.adaptive_softmax.log_prob(last_hidden)
 
@@ -385,8 +375,7 @@ class TitusModel(Module):
                 if finished[i]:
                     continue
 
-                lp_i = log_probs[i:i+1, :]
-                lp_i = self.repetition_penalty(lp_i, generated_ids[i], repetition_penalty)
+                lp_i = self.repetition_penalty(log_probs[i:i+1, :], generated_ids[i], repetition_penalty)
                 next_token = self.sample_next_token(lp_i, temperature=temperature, top_k=top_k, top_p=top_p)
                 item = next_token.item()
 
@@ -405,8 +394,7 @@ class TitusModel(Module):
                     finished[i] = True
                     continue
 
-                pos = lengths[i]
-                seq[i, pos] = item
+                seq[i, lengths[i]] = item
                 lengths[i] += 1
 
                 outputs[i] += token_text
@@ -471,5 +459,5 @@ if __name__ == "__main__":
         print(f'[+] d_model={model.d_model}, nhead={model.nhead}, dim_feedforward={model.dim_feedforward}, layers={model.no_transformer_layers}')
         while True:
             text = input('> ')
-            # print(model.predict(text))
-            print(model.think_longer(text, k=10))
+            print(model.predict(text))
+            # print(model.think_longer(text, k=3))

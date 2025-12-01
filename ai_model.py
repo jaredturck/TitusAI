@@ -1,7 +1,7 @@
 from torch.utils.data import Dataset, DataLoader
 from torch.nn import Module
 import torch.nn as nn
-import torch, math, time, sys, os, platform, datetime, requests, array, re
+import torch, math, time, sys, os, platform, datetime, requests, array, re, threading
 from transformers import AutoTokenizer
 from collections import Counter
 from dotenv import load_dotenv
@@ -356,12 +356,12 @@ class TitusModel(Module):
             return torch.multinomial(probs, num_samples=1)
 
     @torch.no_grad()
-    def generate_k(self, text, length_multiplier, temperature, top_k, top_p, repetition_penalty, no_repeat_ngram_size, k):
+    def generate_k(self, text, max_steps, temperature, top_k, top_p, repetition_penalty, no_repeat_ngram_size, k):
 
         prompt = f'Q: {text}\nA: '
         base_seq = self.dataset.tokenizer(prompt, return_tensors='pt')['input_ids'].to(DEVICE)
         prompt_len = base_seq.size(1)
-        max_steps = int(self.max_length * length_multiplier)
+        # max_steps = int(self.max_length * length_multiplier)
         total_max_length = prompt_len + max_steps
         eos_id = self.dataset.tokenizer.eos_token_id
 
@@ -369,7 +369,7 @@ class TitusModel(Module):
         seq[:, :prompt_len] = base_seq.expand(k, -1)
 
         lengths = [prompt_len for i in range(k)]
-        outputs = ['' for i in range(k)]
+        self.outputs = ['' for i in range(k)]
         generated_ids = [[] for i in range(k)]
         finished = [False for i in range(k)]
 
@@ -403,13 +403,13 @@ class TitusModel(Module):
                 item = next_token.item()
 
                 if item == eos_id:
-                    if re.search(r'[a-zA-Z0-9]', outputs[i]):
+                    if re.search(r'[a-zA-Z0-9]', self.outputs[i]):
                         finished[i] = True
                     continue
 
                 token_text = self.dataset.tokenizer.decode([item], skip_special_tokens=True)
 
-                if token_text.strip() == '' and not re.search(r'[a-zA-Z0-9]', outputs[i]):
+                if token_text.strip() == '' and not re.search(r'[a-zA-Z0-9]', self.outputs[i]):
                     generated_ids[i].append(item)
                     continue
 
@@ -420,10 +420,10 @@ class TitusModel(Module):
                 seq[i, lengths[i]] = item
                 lengths[i] += 1
 
-                outputs[i] += token_text
+                self.outputs[i] += token_text
                 generated_ids[i].append(item)
         
-        return [out.strip() for out in outputs]
+        return [out.strip() for out in self.outputs]
 
     def cosine_similarity(self, a, b):
         ''' Compute cosine similarity between two Counters '''
@@ -434,17 +434,29 @@ class TitusModel(Module):
         sum2 = math.sqrt(sum(v * v for v in b.values()))
         return product / (sum1 * sum2) if sum1 and sum2 else 0.0
     
-    def predict(self, text, length_multiplier=1.0, temperature=0.4, top_k=30, top_p=0.8, repetition_penalty=1.1, no_repeat_ngram_size=4):
+    def predict(self, text, max_steps=200, temperature=0.4, top_k=30, top_p=0.8, repetition_penalty=1.1, no_repeat_ngram_size=4):
         ''' Generate single answer '''
 
-        answer = self.generate_k(text, length_multiplier, temperature, top_k, top_p, repetition_penalty, no_repeat_ngram_size, k=1)
+        answer = self.generate_k(text, max_steps, temperature, top_k, top_p, repetition_penalty, no_repeat_ngram_size, k=1)
         return answer[0]
+    
+    def predict_threaded(self, text, max_steps=200, temperature=0.4, top_k=30, top_p=0.8, repetition_penalty=1.1, no_repeat_ngram_size=4):
+        t = threading.Thread(target = self.generate_k, args=(text, max_steps, temperature, top_k, top_p, repetition_penalty, no_repeat_ngram_size, 1))
+        t.start()
+        seek = 0
+        print('')
+        while t.is_alive():
+            time.sleep(0.01)
+            new_txt = self.outputs[0]
+            print(new_txt[seek:], end='', flush=True)
+            seek = len(new_txt)
+        print('')
     
     @timeit
     def think_longer(self, text, k = 3):
         ''' Pick the best answer '''
 
-        answers = self.generate_k(text, length_multiplier=1.0, temperature=0.6, top_k=50, top_p=0.9, repetition_penalty=1.2, no_repeat_ngram_size=4, k=k)
+        answers = self.generate_k(text, max_steps=200, temperature=0.6, top_k=50, top_p=0.9, repetition_penalty=1.2, no_repeat_ngram_size=4, k=k)
 
         counters = []
         for answer in answers:
@@ -475,12 +487,26 @@ if __name__ == "__main__":
                 model.save_weights()
             else:
                 print('[-] Training was not started, no weights to save')
+    
+    elif len(sys.argv) > 1 and sys.argv[1] == 'thread':
+        model = TitusModel().to(DEVICE)
+        model.load_weights()
+        model.eval()
+        print(f'[+] d_model={model.d_model}, nhead={model.nhead}, dim_feedforward={model.dim_feedforward}, layers={model.no_transformer_layers}')
+        while True:
+            model.predict_threaded(input('> '), max_steps=1024)
+    
+    elif len(sys.argv) > 1 and sys.argv[1] == 'think':
+        model = TitusModel().to(DEVICE)
+        model.load_weights()
+        model.eval()
+        print(f'[+] d_model={model.d_model}, nhead={model.nhead}, dim_feedforward={model.dim_feedforward}, layers={model.no_transformer_layers}')
+        while True:
+            print(model.think_longer(input('> '), k=3))
     else:
         model = TitusModel().to(DEVICE)
         model.load_weights()
         model.eval()
         print(f'[+] d_model={model.d_model}, nhead={model.nhead}, dim_feedforward={model.dim_feedforward}, layers={model.no_transformer_layers}')
         while True:
-            text = input('> ')
-            print(model.predict(text))
-            # print(model.think_longer(text, k=3))
+            print(model.predict(input('> ')))

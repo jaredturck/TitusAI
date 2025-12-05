@@ -28,14 +28,15 @@ if platform.node() == 'Jared-PC':
         # 'datasets/falcon-distillation/outputs_dataset_3/',
         # 'datasets/falcon-distillation/outputs_dataset_4/',
         # 'datasets/falcon-distillation/outputs_dataset_5/',
-        'datasets/chatgpt-questions/falcon_outputs'
+        # 'datasets/chatgpt-questions/falcon_outputs'
+        'datasets/wiki-dataset/clean_outputs'
     ]
     USE_ALL_SAMPLES = False
 
 elif platform.node() == 'Jared-server':
     DEVICE = 'cuda:0'
     BATCH_SIZE = 140
-    MAX_SAMPLES = 10_000_000
+    MAX_SAMPLES = 100_000_000
     WEIGHTS_PATH = '/home/jared/TitusAI/weights/'
     TOKENIZER_FILE = '/home/jared/TitusAI/weights/spu_tokenizer'
     TRAINING_DATA = [
@@ -45,9 +46,10 @@ elif platform.node() == 'Jared-server':
         # '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_3/',
         # '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_4/',
         # '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_5/',
-        '/home/jared/TitusAI/datasets/chatgpt-questions/falcon_outputs'
+        # '/home/jared/TitusAI/datasets/chatgpt-questions/falcon_outputs'
+        '/home/jared/TitusAI/datasets/wiki-dataset/clean_outputs'
     ]
-    USE_ALL_SAMPLES = True
+    USE_ALL_SAMPLES = False
 
 else:
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'

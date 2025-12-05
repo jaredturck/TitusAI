@@ -20,12 +20,12 @@ TOKENIZER.add_special_tokens({
 
 # Configuration
 TARGET_LOSS = 1.3
-MAX_LENGTH = 200
 
 if platform.node() == 'Jared-PC':
     DEVICE = 'cuda'
     BATCH_SIZE = 28
     MAX_TOKENS = 100_000
+    WINDOW_SIZE = 200
     WEIGHTS_PATH = 'weights/'
     TOKENIZER_FILE = 'weights/spu_tokenizer'
     TRAINING_DATA = [
@@ -42,8 +42,9 @@ if platform.node() == 'Jared-PC':
 
 elif platform.node() == 'Jared-server':
     DEVICE = 'cuda:0'
-    BATCH_SIZE = 140
+    BATCH_SIZE = 200
     MAX_TOKENS = 100_000_000
+    WINDOW_SIZE = 100
     WEIGHTS_PATH = '/home/jared/TitusAI/weights/'
     TOKENIZER_FILE = '/home/jared/TitusAI/weights/spu_tokenizer'
     TRAINING_DATA = [
@@ -82,16 +83,17 @@ def timeit(func):
 
 class TitusDataset(Dataset):
     def __init__(self):
-        self.max_length = MAX_LENGTH
+        self.window_size = WINDOW_SIZE
         self.tokenizer = TOKENIZER
         self.dataset_len = None
         self.buffer_size = 1024 * 1024 * 16  # 16 MB buffer
+        assert WINDOW_SIZE <= 200, "window size cannot be larger then context size 200"
 
     def __len__(self):
         return self.dataset_len
 
     def __getitem__(self, idx):
-        return self.ids[idx : idx + self.max_length + 1]
+        return self.ids[idx : idx + self.window_size + 1]
     
     @staticmethod
     def tokenize_files():
@@ -132,7 +134,7 @@ class TitusDataset(Dataset):
         ids = TitusDataset.tokenize_files()
         self._ids = ids
         self.ids = torch.frombuffer(memoryview(self._ids), dtype=torch.int32)
-        self.dataset_len = len(self.ids) - (self.max_length + 1)
+        self.dataset_len = len(self.ids) - (self.window_size + 1)
         print(f'[+] Loaded {len(self.ids):,} training samples')
 
     def save_tensors(self):
@@ -150,8 +152,8 @@ class TitusModel(Module):
         self.no_transformer_layers = self.d_model // 128
         self.dropout = 0.1
         self.embedding_size = len(self.dataset.tokenizer)
-        self.max_length = MAX_LENGTH
-        self.max_epochs = 5
+        self.max_length = 200
+        self.max_epochs = 1
         self.context = torch.empty(1, 0, dtype=torch.long, device=DEVICE)
         self.sqrt_dmodel = math.sqrt(self.d_model)
         self.dataloader_workers = max(2, os.cpu_count() // 2)

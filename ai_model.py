@@ -80,7 +80,7 @@ def timeit(func):
         return result
     return wrapper
 
-class ShakespeareDataset(Dataset):
+class TitusDataset(Dataset):
     def __init__(self):
         self.max_length = MAX_LENGTH
         self.tokenizer = TOKENIZER
@@ -129,7 +129,7 @@ class ShakespeareDataset(Dataset):
     def read_data(self):
         ''' Reads training data from TXT file '''
 
-        ids = ShakespeareDataset.tokenize_files()
+        ids = TitusDataset.tokenize_files()
         self._ids = ids
         self.ids = torch.frombuffer(memoryview(self._ids), dtype=torch.int32)
         self.dataset_len = len(self.ids) - (self.max_length + 1)
@@ -143,7 +143,7 @@ class TitusModel(Module):
     def __init__(self):
         super().__init__()
         Module.train(self, True)
-        self.dataset = ShakespeareDataset()
+        self.dataset = TitusDataset()
         self.d_model = 1024
         self.nhead = self.d_model // 64
         self.dim_feedforward = self.d_model * 4

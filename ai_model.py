@@ -11,6 +11,13 @@ load_dotenv()
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 STATUS_WEBHOOK = os.getenv('STATUS_WEBHOOK')
 
+# Setup tokenizer
+TOKENIZER = AutoTokenizer.from_pretrained("gpt2")
+TOKENIZER.add_special_tokens({
+    'eos_token' : '<EOS>',
+    'bos_token' : '<BOS>',
+})
+
 # Configuration
 TARGET_LOSS = 1.3
 MAX_LENGTH = 200
@@ -18,7 +25,7 @@ MAX_LENGTH = 200
 if platform.node() == 'Jared-PC':
     DEVICE = 'cuda'
     BATCH_SIZE = 28
-    MAX_SAMPLES = 100_000
+    MAX_TOKENS = 100_000
     WEIGHTS_PATH = 'weights/'
     TOKENIZER_FILE = 'weights/spu_tokenizer'
     TRAINING_DATA = [
@@ -36,7 +43,7 @@ if platform.node() == 'Jared-PC':
 elif platform.node() == 'Jared-server':
     DEVICE = 'cuda:0'
     BATCH_SIZE = 140
-    MAX_SAMPLES = 100_000_000
+    MAX_TOKENS = 100_000_000
     WEIGHTS_PATH = '/home/jared/TitusAI/weights/'
     TOKENIZER_FILE = '/home/jared/TitusAI/weights/spu_tokenizer'
     TRAINING_DATA = [
@@ -54,7 +61,7 @@ elif platform.node() == 'Jared-server':
 else:
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
     BATCH_SIZE = 1
-    MAX_SAMPLES = 1
+    MAX_TOKENS = 1
 
 def send_status(message):
     ''' Sends a status update to the Discord webhook '''
@@ -76,14 +83,9 @@ def timeit(func):
 class ShakespeareDataset(Dataset):
     def __init__(self):
         self.max_length = MAX_LENGTH
-        self.tokenizer = AutoTokenizer.from_pretrained("gpt2")
+        self.tokenizer = TOKENIZER
         self.dataset_len = None
         self.buffer_size = 1024 * 1024 * 16  # 16 MB buffer
-
-        self.tokenizer.add_special_tokens({
-            'eos_token' : '<EOS>',
-            'bos_token' : '<BOS>',
-        })
 
     def __len__(self):
         return self.dataset_len
@@ -91,9 +93,8 @@ class ShakespeareDataset(Dataset):
     def __getitem__(self, idx):
         return self.ids[idx : idx + self.max_length + 1]
     
-    def read_data(self):
-        ''' Reads training data from TXT file '''
-
+    @staticmethod
+    def tokenize_files():
         print('[+] Reading training data...')
         contains_letters = re.compile('[a-zA-Z]+')
         ids = array.array('I')
@@ -108,20 +109,29 @@ class ShakespeareDataset(Dataset):
                             continue
 
                         if row == '[BOS]\n':
-                            ids.extend([self.tokenizer.bos_token_id])
+                            ids.extend([TOKENIZER.bos_token_id])
 
                         elif row == '[EOS]\n':
-                            ids.extend([self.tokenizer.eos_token_id])
+                            ids.extend([TOKENIZER.eos_token_id])
 
                         else:
-                            token_ids = self.tokenizer.encode(row, add_special_tokens=False)
+                            token_ids = TOKENIZER.encode(row, add_special_tokens=False)
                             ids.extend(token_ids)
                             
                         if time.time() - start > 10:
                             start = time.time()
                             print(f'[+] Processed {len(ids):,} tokens')
 
-        self.ids = torch.frombuffer(memoryview(ids), dtype=torch.int32).clone().to(torch.long)
+                            if not USE_ALL_SAMPLES and len(ids) >= MAX_TOKENS:
+                                return ids
+        return ids
+    
+    def read_data(self):
+        ''' Reads training data from TXT file '''
+
+        ids = ShakespeareDataset.tokenize_files()
+        self._ids = ids
+        self.ids = torch.frombuffer(memoryview(self._ids), dtype=torch.int32)
         self.dataset_len = len(self.ids) - (self.max_length + 1)
         print(f'[+] Loaded {len(self.ids):,} training samples')
 
@@ -226,7 +236,6 @@ class TitusModel(Module):
         self.load_weights()
 
         self.dataset.read_data()
-        self.dataset.save_tensors()
         self.dataloader = DataLoader(
             self.dataset, batch_size=BATCH_SIZE, shuffle=True, pin_memory=True, num_workers=self.dataloader_workers,
             persistent_workers=True, prefetch_factor=4
@@ -244,7 +253,7 @@ class TitusModel(Module):
             for n, batch in enumerate(self.dataloader):
                 try:
 
-                    batch = batch.to(DEVICE, non_blocking=True)
+                    batch = batch.to(DEVICE, dtype=torch.long, non_blocking=True)
                     src = batch[:, :-1]
                     trg = batch[:, 1:]
 

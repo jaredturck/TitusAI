@@ -253,7 +253,6 @@ class TitusModel(Module):
             f'dim_feedforward={self.dim_feedforward}, layers={self.no_transformer_layers}, batch_size={BATCH_SIZE}, embedding_size={self.embedding_size}')
         self.training_started = True
         for epoch in range(self.max_epochs):
-            total_loss = 0.0
             epoch_start = time.time()
             save_start = time.time()
             start = time.time()
@@ -264,29 +263,29 @@ class TitusModel(Module):
                     src = batch[:, :-1]
                     trg = batch[:, 1:]
 
-                    self.optimizer.zero_grad()
+                    self.optimizer.zero_grad(set_to_none=True)
                     
-                    out = self.forward(src)
-                    out2d = out.reshape(-1, out.size(-1))
-                    tgt1d = trg.reshape(-1)
-
-                    out = self.adaptive_softmax(out2d, tgt1d)
-                    loss = out.loss
+                    with torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16):
+                        out = self.forward(src)
+                        out2d = out.reshape(-1, out.size(-1))
+                        tgt1d = trg.reshape(-1)
+                        out = self.adaptive_softmax(out2d, tgt1d)
+                        loss = out.loss
 
                     loss.backward()
                     self.optimizer.step()
-                    total_loss += loss.item()
 
                     if time.time() - start > 10:
                         pcnt = (n+1) / len(self.dataloader) * 100
                         tps = int((((n+1) - prev_batch_num) * BATCH_SIZE * self.max_length) / (time.time() - start))
                         start = time.time()
-                        print(f'[+] Epoch {epoch+1} of {self.max_epochs}, loss: {loss.item():.4f}, batch {n+1} of {len(self.dataloader):,}, tps: {tps:,} ({pcnt:.1f}%)')
+                        current_loss = loss.detach().item()
+                        print(f'[+] Epoch {epoch+1} of {self.max_epochs}, loss: {current_loss:.4f}, batch {n+1} of {len(self.dataloader):,}, tps: {tps:,} ({pcnt:.1f}%)')
                     
                         if time.time() - save_start > 600:
                             save_start = time.time()
                             self.save_weights()
-                            send_status(f'[+] Epoch {epoch+1} of {self.max_epochs}, loss: {loss.item():.4f}, batch {n+1} of {len(self.dataloader):,}, '
+                            send_status(f'[+] Epoch {epoch+1} of {self.max_epochs}, loss: {current_loss:.4f}, batch {n+1} of {len(self.dataloader):,}, '
                                 f'tps: {tps:,} ({pcnt:.1f}%)')
                             print(f'[+] Saved weights at epoch {epoch+1}, batch {n+1}')
                         
@@ -298,11 +297,11 @@ class TitusModel(Module):
                     torch.cuda.empty_cache()
                     time.sleep(5)
                     continue
+            
+            current_loss = loss.detach().item()
+            print(f'[+] Epoch {epoch+1} of {self.max_epochs}, loss: {current_loss:.4f}, time: {time.time()-epoch_start:.2f}s')
 
-            avg_loss = total_loss / len(self.dataloader)
-            print(f'[+] Epoch {epoch+1} of {self.max_epochs}, avg loss: {avg_loss:.4f}, time: {time.time()-epoch_start:.2f}s')
-
-            if avg_loss < TARGET_LOSS:
+            if current_loss < TARGET_LOSS:
                 print('[+] Target loss reached, stopping training')
                 self.save_weights()
                 return
@@ -498,6 +497,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == 'train':
         try:
             model = TitusModel().to(DEVICE)
+            model = torch.compile(model, mode='max-autotune')
             model.train_model()
             
         except KeyboardInterrupt:
@@ -527,4 +527,4 @@ if __name__ == "__main__":
         model.eval()
         print(f'[+] d_model={model.d_model}, nhead={model.nhead}, dim_feedforward={model.dim_feedforward}, layers={model.no_transformer_layers}')
         while True:
-            print(model.predict(input('> ')))
+            print(model.predict(input('> '), max_steps=1024))

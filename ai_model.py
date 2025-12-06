@@ -45,7 +45,7 @@ if platform.node() == 'Jared-PC':
 
 elif platform.node() == 'Jared-server':
     DEVICE = 'cuda:0'
-    BATCH_SIZE = 200
+    BATCH_SIZE = 400
     MAX_TOKENS = 100_000_000
     WINDOW_SIZE = 100
     WEIGHTS_PATH = '/home/jared/TitusAI/weights/'

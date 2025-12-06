@@ -21,6 +21,7 @@ TOKENIZER.add_special_tokens({
 # Configuration
 TARGET_LOSS = 1.3
 
+# window_size 100 --> batch size 200, window_size 200 --> batch size 140
 if platform.node() == 'Jared-PC':
     DEVICE = 'cuda'
     BATCH_SIZE = 28
@@ -35,8 +36,10 @@ if platform.node() == 'Jared-PC':
         # 'datasets/falcon-distillation/outputs_dataset_3/',
         # 'datasets/falcon-distillation/outputs_dataset_4/',
         # 'datasets/falcon-distillation/outputs_dataset_5/',
-        # 'datasets/chatgpt-questions/falcon_outputs'
-        'datasets/wiki-dataset/clean_outputs'
+        'datasets/chatgpt-questions/falcon_outputs',
+        # 'datasets/wiki-dataset/clean_outputs',
+        'datasets/code-dataset/outputs',
+        'datasets/code-dataset/raw_code'
     ]
     USE_ALL_SAMPLES = False
 
@@ -54,8 +57,10 @@ elif platform.node() == 'Jared-server':
         # '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_3/',
         # '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_4/',
         # '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_5/',
-        # '/home/jared/TitusAI/datasets/chatgpt-questions/falcon_outputs'
-        '/home/jared/TitusAI/datasets/wiki-dataset/clean_outputs'
+        '/home/jared/TitusAI/datasets/chatgpt-questions/falcon_outputs',
+        # '/home/jared/TitusAI/datasets/wiki-dataset/clean_outputs',
+        '/home/jared/TitusAI/datasets/code-dataset/outputs',
+        '/home/jared/TitusAI/datasets/code-dataset/raw_code'
     ]
     USE_ALL_SAMPLES = False
 

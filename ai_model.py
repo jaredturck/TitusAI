@@ -1,7 +1,7 @@
 from torch.utils.data import Dataset, DataLoader
 from torch.nn import Module
 import torch.nn as nn
-import torch, math, time, sys, os, platform, datetime, requests, array, re, threading
+import torch, math, time, sys, os, platform, datetime, requests, array, re, threading, multiprocessing, itertools, bisect
 from transformers import AutoTokenizer
 from collections import Counter
 from dotenv import load_dotenv
@@ -25,7 +25,7 @@ TARGET_LOSS = 1.3
 if platform.node() == 'Jared-PC':
     DEVICE = 'cuda'
     BATCH_SIZE = 28
-    MAX_TOKENS = 100_000
+    MAX_TOKENS = 10_000_000
     WINDOW_SIZE = 200
     WEIGHTS_PATH = 'weights/'
     TOKENIZER_FILE = 'weights/spu_tokenizer'
@@ -51,18 +51,18 @@ elif platform.node() == 'Jared-server':
     WEIGHTS_PATH = '/home/jared/TitusAI/weights/'
     TOKENIZER_FILE = '/home/jared/TitusAI/weights/spu_tokenizer'
     TRAINING_DATA = [
-        # '/home/jared/TitusAI/datasets/book_dataset',
-        # '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_1/',
-        # '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_2/',
-        # '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_3/',
-        # '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_4/',
-        # '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_5/',
+        '/home/jared/TitusAI/datasets/book_dataset',
+        '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_1/',
+        '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_2/',
+        '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_3/',
+        '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_4/',
+        '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_5/',
         '/home/jared/TitusAI/datasets/chatgpt-questions/falcon_outputs',
         # '/home/jared/TitusAI/datasets/wiki-dataset/clean_outputs',
         '/home/jared/TitusAI/datasets/code-dataset/outputs',
         '/home/jared/TitusAI/datasets/code-dataset/raw_code'
     ]
-    USE_ALL_SAMPLES = False
+    USE_ALL_SAMPLES = True
 
 else:
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -92,59 +92,87 @@ class TitusDataset(Dataset):
         self.tokenizer = TOKENIZER
         self.dataset_len = None
         self.buffer_size = 1024 * 1024 * 16  # 16 MB buffer
+        self.pcount = os.cpu_count()
         assert WINDOW_SIZE <= 200, "window size cannot be larger then context size 200"
 
     def __len__(self):
         return self.dataset_len
 
     def __getitem__(self, idx):
-        return self.ids[idx : idx + self.window_size + 1]
+        chunk = bisect.bisect_right(self.chunk_offsets, idx)
+        chunk_offset = (idx - self.chunk_offsets[chunk - 1])
+        return self.results[chunk - 1][0][chunk_offset : chunk_offset + self.window_size + 1]
+        # return self.ids[idx : idx + self.window_size + 1]
+    
+    def partition_files(self):
+        ''' K-way Parition training data files '''
+
+        files = []
+        for folder in TRAINING_DATA:
+            for filename in os.listdir(folder):
+                file_path = os.path.join(folder, filename)
+                file_size = os.path.getsize(file_path)
+                files.append((file_size, file_path))
+        
+        files = sorted(files)
+
+        buckets = [[] for i in range(self.pcount)]
+        bucket_size = [0 for i in range(self.pcount)]
+
+        for size, file in files:
+            min_bucket = bucket_size.index(min(bucket_size))
+            buckets[min_bucket].append(file)
+            bucket_size[min_bucket] += size
+        
+        return buckets
     
     @staticmethod
-    def tokenize_files():
+    def tokenize_files(files, pcount=os.cpu_count()):
         print('[+] Reading training data...')
         contains_letters = re.compile('[a-zA-Z]+')
         ids = array.array('I')
         start = time.time()
-        for folder in TRAINING_DATA:
-            for filename in os.listdir(folder):
-                file_path = os.path.join(folder, filename)
-                with open(file_path, 'r', encoding='utf-8') as file:
 
-                    for row in file:
-                        if not contains_letters.search(row):
-                            continue
+        for file_path in files:
+            with open(file_path, 'r', encoding='utf-8') as file:
 
-                        if row == '[BOS]\n':
-                            ids.extend([TOKENIZER.bos_token_id])
+                for row in file:
+                    if not contains_letters.search(row):
+                        continue
 
-                        elif row == '[EOS]\n':
-                            ids.extend([TOKENIZER.eos_token_id])
+                    if row == '[BOS]\n':
+                        ids.extend([TOKENIZER.bos_token_id])
 
-                        else:
-                            token_ids = TOKENIZER.encode(row, add_special_tokens=False)
-                            ids.extend(token_ids)
-                            
-                        if time.time() - start > 10:
-                            start = time.time()
-                            print(f'[+] Processed {len(ids):,} tokens')
+                    elif row == '[EOS]\n':
+                        ids.extend([TOKENIZER.eos_token_id])
 
-                            if not USE_ALL_SAMPLES and len(ids) >= MAX_TOKENS:
-                                return ids
-        return ids
+                    else:
+                        token_ids = TOKENIZER.encode(row, add_special_tokens=False)
+                        ids.extend(token_ids)
+                        
+                    if time.time() - start > 10:
+                        start = time.time()
+                        print(f'[+] Processed {len(ids):,} tokens')
+
+                        if not USE_ALL_SAMPLES and len(ids) >= MAX_TOKENS // pcount:
+                            ids_buffer = torch.frombuffer(memoryview(ids), dtype=torch.int32)
+                            return ids_buffer, len(ids_buffer)
+        
+        print('Finished')
+        ids_buffer = torch.frombuffer(memoryview(ids), dtype=torch.int32)
+        return ids_buffer, len(ids_buffer)
     
     def read_data(self):
         ''' Reads training data from TXT file '''
 
-        ids = TitusDataset.tokenize_files()
-        self._ids = ids
-        self.ids = torch.frombuffer(memoryview(self._ids), dtype=torch.int32)
-        self.dataset_len = len(self.ids) - (self.window_size + 1)
-        print(f'[+] Loaded {len(self.ids):,} training samples')
-
-    def save_tensors(self):
-        filename = os.path.join(WEIGHTS_PATH, f'tensors_{datetime.datetime.now().strftime(r"%d_%b_%Y-%H_%M")}.data')
-        torch.save(self.ids, filename)
+        buckets = self.partition_files()
+        with multiprocessing.Pool(processes=self.pcount) as pool:
+            self.results = pool.map(TitusDataset.tokenize_files, buckets)
+        
+        _, lengths = zip(*self.results)
+        self.chunk_offsets = [0] + list(itertools.accumulate(lengths))
+        self.dataset_len = self.chunk_offsets[-1] - (self.window_size + 1)
+        print(f'[+] Loaded {self.dataset_len:,} training samples')
 
 class TitusModel(Module):
     def __init__(self):

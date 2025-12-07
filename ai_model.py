@@ -92,6 +92,7 @@ class TitusDataset(Dataset):
     def __init__(self):
         self.window_size = WINDOW_SIZE
         self.tokenizer = TOKENIZER
+        self.tokenizer.model_max_length = 2**31 - 1
         self.dataset_len = None
         self.buffer_size = 1024 * 1024 * 16  # 16 MB buffer
         self.pcount = os.cpu_count()
@@ -165,6 +166,7 @@ class TitusDataset(Dataset):
     
     @staticmethod
     def combine_shards():
+        processed_shareds = []
         with open(os.path.join(WEIGHTS_PATH, 'dataset.bin'), 'ab') as outfile:
             for file in os.listdir(WEIGHTS_PATH):
                 if file.startswith('shard_') and file.endswith('.bin'):
@@ -175,8 +177,14 @@ class TitusDataset(Dataset):
                             if not buffer:
                                 break
                             outfile.write(buffer)
+
                     os.remove(shard_path)
-                    print(f'[+] Merged and deleted shard {shard_path}')
+                    shard_id = re.findall(r'shard_(\d+).bin', file)
+                    if shard_id:
+                        processed_shareds.append(int(shard_id[0]))
+
+        shard_ids = ", ".join(map(str, sorted(processed_shareds)))
+        print(f'[+] Merged and deleted shards: {shard_ids}')
     
     def read_tensors(self):
         self.ids = np.memmap(os.path.join(WEIGHTS_PATH, 'dataset.bin'), dtype=np.uint32, mode='r+')
@@ -202,6 +210,9 @@ class TitusDataset(Dataset):
         buckets = self.partition_files()
         buckets = list(filter(None, buckets))
         pcount = len(buckets)
+
+        dataset_paths = sorted(set(os.path.relpath(i, 'datasets').split(os.sep)[0] for i in TRAINING_DATA))
+        print(f'[+] Datasets: {", ".join(dataset_paths)}')
 
         manager = multiprocessing.Manager()
         stop_event = threading.Event()

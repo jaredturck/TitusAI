@@ -1,7 +1,9 @@
+import multiprocessing
 from torch.utils.data import Dataset, DataLoader
 from torch.nn import Module
 import torch.nn as nn
 import torch, math, time, sys, os, platform, datetime, requests, array, re, threading
+import numpy as np
 from transformers import AutoTokenizer
 from collections import Counter
 from dotenv import load_dotenv
@@ -25,7 +27,7 @@ TARGET_LOSS = 1.3
 if platform.node() == 'Jared-PC':
     DEVICE = 'cuda'
     BATCH_SIZE = 28
-    MAX_TOKENS = 100_000
+    MAX_TOKENS = 500_000_000
     WINDOW_SIZE = 200
     WEIGHTS_PATH = 'weights/'
     TOKENIZER_FILE = 'weights/spu_tokenizer'
@@ -92,6 +94,7 @@ class TitusDataset(Dataset):
         self.tokenizer = TOKENIZER
         self.dataset_len = None
         self.buffer_size = 1024 * 1024 * 16  # 16 MB buffer
+        self.pcount = os.cpu_count()
         assert WINDOW_SIZE <= 200, "window size cannot be larger then context size 200"
 
     def __len__(self):
@@ -100,51 +103,106 @@ class TitusDataset(Dataset):
     def __getitem__(self, idx):
         return self.ids[idx : idx + self.window_size + 1]
     
+    def partition_files(self):
+        ''' K-way Parition training data files '''
+
+        files = []
+        for folder in TRAINING_DATA:
+            for filename in os.listdir(folder):
+                file_path = os.path.join(folder, filename)
+                file_size = os.path.getsize(file_path)
+                files.append((file_size, file_path))
+        
+        files = sorted(files)
+
+        buckets = [[] for i in range(self.pcount)]
+        bucket_size = [0 for i in range(self.pcount)]
+
+        for size, file in files:
+            min_bucket = bucket_size.index(min(bucket_size))
+            buckets[min_bucket].append(file)
+            bucket_size[min_bucket] += size
+        
+        return buckets
+    
     @staticmethod
-    def tokenize_files():
+    def tokenize_files(files, pid, pcount):
         print('[+] Reading training data...')
         contains_letters = re.compile('[a-zA-Z]+')
         ids = array.array('I')
         start = time.time()
-        for folder in TRAINING_DATA:
-            for filename in os.listdir(folder):
-                file_path = os.path.join(folder, filename)
-                with open(file_path, 'r', encoding='utf-8') as file:
+        for file_path in files:
+            with open(file_path, 'r', encoding='utf-8') as file:
+                for row in file:
+                    if not contains_letters.search(row):
+                        continue
 
-                    for row in file:
-                        if not contains_letters.search(row):
-                            continue
+                    if row == '[BOS]\n':
+                        ids.extend([TOKENIZER.bos_token_id])
 
-                        if row == '[BOS]\n':
-                            ids.extend([TOKENIZER.bos_token_id])
+                    elif row == '[EOS]\n':
+                        ids.extend([TOKENIZER.eos_token_id])
 
-                        elif row == '[EOS]\n':
-                            ids.extend([TOKENIZER.eos_token_id])
-
-                        else:
-                            token_ids = TOKENIZER.encode(row, add_special_tokens=False)
-                            ids.extend(token_ids)
-                            
-                        if time.time() - start > 10:
-                            start = time.time()
-                            print(f'[+] Processed {len(ids):,} tokens')
-
-                            if not USE_ALL_SAMPLES and len(ids) >= MAX_TOKENS:
-                                return ids
-        return ids
+                    else:
+                        token_ids = TOKENIZER.encode(row, add_special_tokens=False)
+                        ids.extend(token_ids)
+                        
+                    if time.time() - start > 10:
+                        start = time.time()
+                        print(f'[+] Processed {len(ids):,} tokens')
+                    
+                    if not USE_ALL_SAMPLES and len(ids) >= MAX_TOKENS // pcount:
+                        # Write the ids to file
+                        with open(os.path.join(WEIGHTS_PATH, f'shard_{pid}.bin'), 'wb') as f:
+                            ids.tofile(f)
+                        return
+        
+        if files:
+            # Write the ids to file
+            with open(os.path.join(WEIGHTS_PATH, f'shard_{pid}.bin'), 'wb') as f:
+                ids.tofile(f)
+    
+    @staticmethod
+    def combine_shards():
+        with open(os.path.join(WEIGHTS_PATH, 'dataset.bin'), 'ab') as outfile:
+            for file in os.listdir(WEIGHTS_PATH):
+                if file.startswith('shard_') and file.endswith('.bin'):
+                    shard_path = os.path.join(WEIGHTS_PATH, file)
+                    with open(shard_path, 'rb') as infile:
+                        while True:
+                            buffer = infile.read(1024 * 1024 * 16)
+                            if not buffer:
+                                break
+                            outfile.write(buffer)
+                    os.remove(shard_path)
+                    print(f'[+] Merged and deleted shard {shard_path}')
+    
+    def read_tensors(self):
+        self.ids = np.memmap(os.path.join(WEIGHTS_PATH, 'dataset.bin'), dtype=np.uint32, mode='r+')
+        self.dataset_len = len(self.ids) - (self.window_size + 1)
     
     def read_data(self):
         ''' Reads training data from TXT file '''
+        
+        start_time = time.time()
 
-        ids = TitusDataset.tokenize_files()
-        self._ids = ids
-        self.ids = torch.frombuffer(memoryview(self._ids), dtype=torch.int32)
-        self.dataset_len = len(self.ids) - (self.window_size + 1)
-        print(f'[+] Loaded {len(self.ids):,} training samples')
+        # Delete dataset.bin
+        dataset_path = os.path.join(WEIGHTS_PATH, 'dataset.bin')
+        if os.path.isfile(dataset_path):
+            os.remove(dataset_path)
 
-    def save_tensors(self):
-        filename = os.path.join(WEIGHTS_PATH, f'tensors_{datetime.datetime.now().strftime(r"%d_%b_%Y-%H_%M")}.data')
-        torch.save(self.ids, filename)
+        # Tokenize files in parallel
+        buckets = self.partition_files()
+        buckets = list(filter(None, buckets))
+        pcount = len(buckets)
+
+        args = [(buckets[i], i, self.pcount) for i in range(pcount)]
+        with multiprocessing.Pool(processes=pcount) as pool:
+            pool.starmap(TitusDataset.tokenize_files, args)
+
+        TitusDataset.combine_shards()
+        self.read_tensors()
+        print(f'[+] Loaded {len(self.ids):,} training samples in {time.time() - start_time:.2f} seconds')
 
 class TitusModel(Module):
     def __init__(self):

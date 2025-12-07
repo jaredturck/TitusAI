@@ -27,23 +27,23 @@ TARGET_LOSS = 1.3
 if platform.node() == 'Jared-PC':
     DEVICE = 'cuda'
     BATCH_SIZE = 28
-    MAX_TOKENS = 500_000_000
+    MAX_TOKENS = 100_000_000
     WINDOW_SIZE = 200
     WEIGHTS_PATH = 'weights/'
     TOKENIZER_FILE = 'weights/spu_tokenizer'
     TRAINING_DATA = [
-        # 'datasets/book_dataset',
-        # 'datasets/falcon-distillation/outputs_dataset_1/',
-        # 'datasets/falcon-distillation/outputs_dataset_2/',
-        # 'datasets/falcon-distillation/outputs_dataset_3/',
-        # 'datasets/falcon-distillation/outputs_dataset_4/',
-        # 'datasets/falcon-distillation/outputs_dataset_5/',
+        'datasets/book_dataset',
+        'datasets/falcon-distillation/outputs_dataset_1/',
+        'datasets/falcon-distillation/outputs_dataset_2/',
+        'datasets/falcon-distillation/outputs_dataset_3/',
+        'datasets/falcon-distillation/outputs_dataset_4/',
+        'datasets/falcon-distillation/outputs_dataset_5/',
         'datasets/chatgpt-questions/falcon_outputs',
         # 'datasets/wiki-dataset/clean_outputs',
         'datasets/code-dataset/outputs',
         'datasets/code-dataset/raw_code'
     ]
-    USE_ALL_SAMPLES = False
+    USE_ALL_SAMPLES = True
 
 elif platform.node() == 'Jared-server':
     DEVICE = 'cuda:0'
@@ -53,18 +53,18 @@ elif platform.node() == 'Jared-server':
     WEIGHTS_PATH = '/home/jared/TitusAI/weights/'
     TOKENIZER_FILE = '/home/jared/TitusAI/weights/spu_tokenizer'
     TRAINING_DATA = [
-        # '/home/jared/TitusAI/datasets/book_dataset',
-        # '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_1/',
-        # '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_2/',
-        # '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_3/',
-        # '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_4/',
-        # '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_5/',
+        '/home/jared/TitusAI/datasets/book_dataset',
+        '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_1/',
+        '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_2/',
+        '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_3/',
+        '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_4/',
+        '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_5/',
         '/home/jared/TitusAI/datasets/chatgpt-questions/falcon_outputs',
         # '/home/jared/TitusAI/datasets/wiki-dataset/clean_outputs',
         '/home/jared/TitusAI/datasets/code-dataset/outputs',
         '/home/jared/TitusAI/datasets/code-dataset/raw_code'
     ]
-    USE_ALL_SAMPLES = False
+    USE_ALL_SAMPLES = True
 
 else:
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -126,8 +126,7 @@ class TitusDataset(Dataset):
         return buckets
     
     @staticmethod
-    def tokenize_files(files, pid, pcount):
-        print('[+] Reading training data...')
+    def tokenize_files(files, pid, pcount, pcounter):
         contains_letters = re.compile('[a-zA-Z]+')
         ids = array.array('I')
         start = time.time()
@@ -148,15 +147,17 @@ class TitusDataset(Dataset):
                         ids.extend(token_ids)
                         
                     if time.time() - start > 10:
+                        pcounter.value = len(ids)
                         start = time.time()
-                        print(f'[+] Processed {len(ids):,} tokens')
                     
                     if not USE_ALL_SAMPLES and len(ids) >= MAX_TOKENS // pcount:
                         # Write the ids to file
+                        pcounter.value = len(ids)
                         with open(os.path.join(WEIGHTS_PATH, f'shard_{pid}.bin'), 'wb') as f:
                             ids.tofile(f)
                         return
         
+        pcounter.value = len(ids)
         if files:
             # Write the ids to file
             with open(os.path.join(WEIGHTS_PATH, f'shard_{pid}.bin'), 'wb') as f:
@@ -181,6 +182,12 @@ class TitusDataset(Dataset):
         self.ids = np.memmap(os.path.join(WEIGHTS_PATH, 'dataset.bin'), dtype=np.uint32, mode='r+')
         self.dataset_len = len(self.ids) - (self.window_size + 1)
     
+    def logger_thread(self, pcounters, stop_event):
+        while not stop_event.is_set():
+            stop_event.wait(10)
+            total = sum(i.value for i in pcounters)
+            print(f'[+] Processed {total:,} tokens')
+    
     def read_data(self):
         ''' Reads training data from TXT file '''
         
@@ -196,9 +203,19 @@ class TitusDataset(Dataset):
         buckets = list(filter(None, buckets))
         pcount = len(buckets)
 
-        args = [(buckets[i], i, self.pcount) for i in range(pcount)]
+        manager = multiprocessing.Manager()
+        stop_event = threading.Event()
+        pcounters = [manager.Value('Q', 0) for i in range(pcount)]
+
+        log_thread = threading.Thread(target=self.logger_thread, args=(pcounters, stop_event))
+        log_thread.start()
+
+        args = [(buckets[i], i, self.pcount, pcounters[i]) for i in range(pcount)]
         with multiprocessing.Pool(processes=pcount) as pool:
             pool.starmap(TitusDataset.tokenize_files, args)
+        
+        stop_event.set()
+        log_thread.join()
 
         TitusDataset.combine_shards()
         self.read_tensors()

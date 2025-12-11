@@ -214,4 +214,4 @@ __marimo__/
 
 # Weights
 weights/*
-!weights/model_18_Nov_2025-08_14.pth
+!weights/model_11_Dec_2025-00_09.pth

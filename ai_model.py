@@ -613,4 +613,4 @@ if __name__ == "__main__":
         model.eval()
         print(f'[+] d_model={model.d_model}, nhead={model.nhead}, dim_feedforward={model.dim_feedforward}, layers={model.no_transformer_layers}')
         while True:
-            print(model.predict(input('> '), max_steps=1024))
+            print(model.predict(input('> '), max_steps=200))

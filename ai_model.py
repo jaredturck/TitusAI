@@ -32,16 +32,16 @@ if platform.node() == 'Jared-PC':
     WEIGHTS_PATH = 'weights/'
     TOKENIZER_FILE = 'weights/spu_tokenizer'
     TRAINING_DATA = [
-        'datasets/book_dataset',
-        'datasets/falcon-distillation/outputs_dataset_1/',
-        'datasets/falcon-distillation/outputs_dataset_2/',
-        'datasets/falcon-distillation/outputs_dataset_3/',
-        'datasets/falcon-distillation/outputs_dataset_4/',
-        'datasets/falcon-distillation/outputs_dataset_5/',
+        # 'datasets/book_dataset',
+        # 'datasets/falcon-distillation/outputs_dataset_1/',
+        # 'datasets/falcon-distillation/outputs_dataset_2/',
+        # 'datasets/falcon-distillation/outputs_dataset_3/',
+        # 'datasets/falcon-distillation/outputs_dataset_4/',
+        # 'datasets/falcon-distillation/outputs_dataset_5/',
         'datasets/chatgpt-questions/falcon_outputs',
         # 'datasets/wiki-dataset/clean_outputs',
-        'datasets/code-dataset/outputs',
-        'datasets/code-dataset/raw_code'
+        # 'datasets/code-dataset/outputs',
+        # 'datasets/code-dataset/raw_code'
     ]
     USE_ALL_SAMPLES = True
 
@@ -53,16 +53,16 @@ elif platform.node() == 'Jared-server':
     WEIGHTS_PATH = '/home/jared/TitusAI/weights/'
     TOKENIZER_FILE = '/home/jared/TitusAI/weights/spu_tokenizer'
     TRAINING_DATA = [
-        '/home/jared/TitusAI/datasets/book_dataset',
-        '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_1/',
-        '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_2/',
-        '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_3/',
-        '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_4/',
-        '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_5/',
+        # '/home/jared/TitusAI/datasets/book_dataset',
+        # '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_1/',
+        # '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_2/',
+        # '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_3/',
+        # '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_4/',
+        # '/home/jared/TitusAI/datasets/falcon-distillation/outputs_dataset_5/',
         '/home/jared/TitusAI/datasets/chatgpt-questions/falcon_outputs',
-        # '/home/jared/TitusAI/datasets/wiki-dataset/clean_outputs',
-        '/home/jared/TitusAI/datasets/code-dataset/outputs',
-        '/home/jared/TitusAI/datasets/code-dataset/raw_code'
+        '/home/jared/TitusAI/datasets/wiki-dataset/clean_outputs',
+        # '/home/jared/TitusAI/datasets/code-dataset/outputs',
+        # '/home/jared/TitusAI/datasets/code-dataset/raw_code'
     ]
     USE_ALL_SAMPLES = True
 
@@ -464,7 +464,6 @@ class TitusModel(Module):
         prompt = f'Q: {text}\nA: '
         base_seq = self.dataset.tokenizer(prompt, return_tensors='pt')['input_ids'].to(DEVICE)
         prompt_len = base_seq.size(1)
-        # max_steps = int(self.max_length * length_multiplier)
         total_max_length = prompt_len + max_steps
         eos_id = self.dataset.tokenizer.eos_token_id
 

@@ -363,7 +363,7 @@ class TitusModel(Module):
 
                     if time.time() - start > 10:
                         pcnt = (n+1) / len(self.dataloader) * 100
-                        tps = int((((n+1) - prev_batch_num) * BATCH_SIZE * self.max_length) / (time.time() - start))
+                        tps = int((((n+1) - prev_batch_num) * BATCH_SIZE * src.size(1)) / (time.time() - start))
                         start = time.time()
                         current_loss = loss.detach().item()
                         print(f'[+] Epoch {epoch+1} of {self.max_epochs}, loss: {current_loss:.4f}, batch {n+1} of {len(self.dataloader):,}, tps: {tps:,} ({pcnt:.1f}%)')

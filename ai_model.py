@@ -524,6 +524,10 @@ class TitusModel(Module):
 
                 self.outputs[i] += token_text
                 generated_ids[i].append(item)
+
+                if step >= max_steps * 0.8 and token_text in ['.','!','?','\n','\t']:
+                    finished[i] = True
+                    continue
         
         return [out.strip() for out in self.outputs]
 
@@ -536,13 +540,13 @@ class TitusModel(Module):
         sum2 = math.sqrt(sum(v * v for v in b.values()))
         return product / (sum1 * sum2) if sum1 and sum2 else 0.0
     
-    def predict(self, text, max_steps=200, temperature=0.4, top_k=30, top_p=0.8, repetition_penalty=1.1, no_repeat_ngram_size=4):
+    def predict(self, text, max_steps=100, temperature=0.4, top_k=30, top_p=0.8, repetition_penalty=1.1, no_repeat_ngram_size=4):
         ''' Generate single answer '''
 
         answer = self.generate_k(text, max_steps, temperature, top_k, top_p, repetition_penalty, no_repeat_ngram_size, k=1)
         return answer[0]
     
-    def predict_threaded(self, text, max_steps=200, temperature=0.4, top_k=30, top_p=0.8, repetition_penalty=1.1, no_repeat_ngram_size=4):
+    def predict_threaded(self, text, max_steps=100, temperature=0.4, top_k=30, top_p=0.8, repetition_penalty=1.1, no_repeat_ngram_size=4):
         t = threading.Thread(target = self.generate_k, args=(text, max_steps, temperature, top_k, top_p, repetition_penalty, no_repeat_ngram_size, 1))
         t.start()
         seek = 0
@@ -558,7 +562,7 @@ class TitusModel(Module):
     def think_longer(self, text, k = 3):
         ''' Pick the best answer '''
 
-        answers = self.generate_k(text, max_steps=200, temperature=0.6, top_k=50, top_p=0.9, repetition_penalty=1.2, no_repeat_ngram_size=4, k=k)
+        answers = self.generate_k(text, max_steps=100, temperature=0.6, top_k=50, top_p=0.9, repetition_penalty=1.2, no_repeat_ngram_size=4, k=k)
 
         counters = []
         for answer in answers:
@@ -597,7 +601,7 @@ if __name__ == "__main__":
         model.eval()
         print(f'[+] d_model={model.d_model}, nhead={model.nhead}, dim_feedforward={model.dim_feedforward}, layers={model.no_transformer_layers}')
         while True:
-            model.predict_threaded(input('> '), max_steps=1024)
+            model.predict_threaded(input('> '), max_steps=100)
     
     elif len(sys.argv) > 1 and sys.argv[1] == 'think':
         model = TitusModel().to(DEVICE)

@@ -36,7 +36,15 @@ def check_datasets():
     for source in DATA_SOURCES:
         print(f'[+] Checking {source["name"]}...')
         dataset = load_source_stream(source, shuffle=False)
-        record = next(iter(dataset))
+        iterator = iter(dataset)
+
+        try:
+            record = next(iterator)
+        finally:
+            close = getattr(iterator, 'close', None)
+            if close is not None:
+                close()
+
         text = extract_first(record, source['text_fields'])
         assert isinstance(text, str)
         assert text.strip()

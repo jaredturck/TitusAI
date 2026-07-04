@@ -86,7 +86,7 @@ torchrun --nnodes=1 --nproc_per_node=2 --master_addr=127.0.0.1 --master_port=296
 
 `check_setup.py` downloads and pins the SmolLM2 tokenizer locally, constructs the full model on the meta device to verify its parameter count, and reads one record from every configured dataset source. It fails immediately if credentials, source names, configurations, or text fields are incorrect.
 
-The setup check does not shuffle source streams. SwallowCode is read from Hugging Face's normalized Parquet conversion and only the `text` column is loaded; this avoids schema conflicts in unrelated raw JSON metadata fields. The full preparation run applies its shuffle buffer after the stream has loaded successfully.
+The setup check does not shuffle source streams. SwallowCode is streamed directly from the official Stage 5 JSONL files under `stage5-auto-format/python/medium/`. Its loader parses only the `text` field and ignores every metadata column, avoiding schema conflicts between raw shards. The full preparation run applies a deterministic bounded shuffle after the text stream has opened successfully.
 
 ## Base-pretraining mixture
 

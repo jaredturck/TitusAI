@@ -78,7 +78,7 @@ PREPARE_CONFIG = {
     'deduplication_database': DATA_PATH / 'deduplication.sqlite3',
     'shuffle_buffer_size': 10_000,
     'random_seed': 1337,
-    'max_total_tokens': 500_000,
+    'max_total_tokens': 13_000_000_000,
 }
 
 DATA_SOURCES = [
@@ -97,10 +97,12 @@ DATA_SOURCES = [
     {
         'name': 'swallowcode',
         'dataset': 'tokyotech-llm/swallow-code-v2',
-        'config': 'stage5-auto-format',
+        'config': None,
         'data_dir': None,
         'split': 'train',
-        'loader': 'converted_parquet',
+        'loader': 'jsonl_text',
+        'data_glob': 'stage5-auto-format/python/medium/train*.jsonl',
+        'jsonl_text_field': 'text',
         'text_fields': ['text'],
         'id_fields': [],
         'columns': ['text'],

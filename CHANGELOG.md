@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.6
+
+- Replace the custom Discord webhook text file with project-root `.env` loading through `python-dotenv`.
+- Ignore local environment files while keeping a credential-free `.env.example` template under version control.
+- Remove the obsolete webhook-path configuration and update notifier tests and setup documentation.
+
 ## 1.0.5
 
 - Restore Discord training monitoring through a dedicated non-blocking notifier used only by DDP rank zero.

@@ -172,16 +172,18 @@ Targets that cross document boundaries are always masked. `isolate_packed_docume
 
 ## Discord training status
 
-Discord notifications are enabled by default and are sent only by DDP rank zero. Create a private webhook in the Discord channel you want to monitor, then save its URL locally:
+Discord notifications are enabled by default and are sent only by DDP rank zero. Create a private webhook in the Discord channel you want to monitor, then store it in the project-root `.env` file:
 
 ```bash
-cp discord_webhook.example.txt discord_webhook.txt
-nano discord_webhook.txt
-chmod 600 discord_webhook.txt
+cp .env.example .env
+nano .env
+chmod 600 .env
 python notifications.py
 ```
 
-`python notifications.py` sends a test message and exits with status zero when Discord accepts it. `discord_webhook.txt` is ignored by Git and must contain only the webhook URL; the original `STATUS_WEBHOOK` environment variable is also accepted as a compatibility fallback.
+The `.env` file must contain `STATUS_WEBHOOK=<your webhook URL>`. It is ignored by Git, while `.env.example` is safe to commit because it contains no credential. A `STATUS_WEBHOOK` value exported by the shell takes precedence over the `.env` value.
+
+`python notifications.py` sends a test message and exits with status zero when Discord accepts it.
 
 During training, Discord receives:
 

@@ -151,8 +151,6 @@ INSTRUCTION_CONFIG = {
 
 DISCORD_CONFIG = {
     'enabled': True,
-    'webhook_url': None,
-    'webhook_path': PROJECT_ROOT / 'discord_webhook.txt',
     'username': 'TitusAI Training',
     'status_interval_seconds': 600,
     'request_timeout_seconds': 5,

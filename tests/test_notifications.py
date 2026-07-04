@@ -16,23 +16,16 @@ class FakeResponse:
         return b''
 
 
-def make_config(tmp_path):
-    webhook_path = tmp_path / 'discord_webhook.txt'
-    webhook_path.write_text(
-        'https://discord.com/api/webhooks/test/token\n',
-        encoding='utf-8',
-    )
+def make_config():
     return {
         'enabled': True,
-        'webhook_url': None,
-        'webhook_path': webhook_path,
         'username': 'TitusAI Test',
         'status_interval_seconds': 600,
         'request_timeout_seconds': 1,
     }
 
 
-def test_discord_notifier_posts_message(monkeypatch, tmp_path):
+def test_discord_notifier_posts_message(monkeypatch):
     requests = []
 
     def fake_urlopen(request, timeout):
@@ -40,8 +33,9 @@ def test_discord_notifier_posts_message(monkeypatch, tmp_path):
         return FakeResponse()
 
     monkeypatch.setattr(notifications, 'urlopen', fake_urlopen)
+    monkeypatch.setenv('STATUS_WEBHOOK', 'https://discord.com/api/webhooks/test/token')
 
-    notifier = DiscordNotifier(make_config(tmp_path))
+    notifier = DiscordNotifier(make_config())
     notifier.send('Training started', [('Step', '1'), ('Loss', '5.0000')])
 
     assert notifier.close()
@@ -56,27 +50,57 @@ def test_discord_notifier_posts_message(monkeypatch, tmp_path):
     assert payload['allowed_mentions'] == {'parse': []}
 
 
-def test_missing_webhook_disables_notifier(tmp_path):
-    config = make_config(tmp_path)
-    config['webhook_path'].unlink()
+def test_missing_webhook_disables_notifier(monkeypatch, tmp_path):
+    monkeypatch.delenv('STATUS_WEBHOOK', raising=False)
+    monkeypatch.setattr(notifications, 'PROJECT_ROOT', tmp_path)
 
-    notifier = DiscordNotifier(config)
+    notifier = DiscordNotifier(make_config())
 
     assert not notifier.enabled
     assert notifier.close()
 
 
-def test_notification_failure_does_not_raise(monkeypatch, tmp_path):
+def test_notification_failure_does_not_raise(monkeypatch):
     def failed_urlopen(request, timeout):
         raise TimeoutError('timed out')
 
     monkeypatch.setattr(notifications, 'urlopen', failed_urlopen)
+    monkeypatch.setenv('STATUS_WEBHOOK', 'https://discord.com/api/webhooks/test/token')
 
-    notifier = DiscordNotifier(make_config(tmp_path))
+    notifier = DiscordNotifier(make_config())
     notifier.send('Training status', [('Step', '50')])
 
     assert not notifier.close()
     assert notifier.last_error == 'timed out'
+
+
+def test_webhook_loads_from_project_env(monkeypatch, tmp_path):
+    (tmp_path / '.env').write_text(
+        'STATUS_WEBHOOK=https://discord.com/api/webhooks/env/token\n',
+        encoding='utf-8',
+    )
+    monkeypatch.delenv('STATUS_WEBHOOK', raising=False)
+    monkeypatch.setattr(notifications, 'PROJECT_ROOT', tmp_path)
+
+    assert notifications.load_webhook_url() == (
+        'https://discord.com/api/webhooks/env/token'
+    )
+
+
+def test_shell_webhook_overrides_project_env(monkeypatch, tmp_path):
+    (tmp_path / '.env').write_text(
+        'STATUS_WEBHOOK=https://discord.com/api/webhooks/env/token\n',
+        encoding='utf-8',
+    )
+    monkeypatch.setenv(
+        'STATUS_WEBHOOK',
+        'https://discord.com/api/webhooks/shell/token',
+    )
+    monkeypatch.setattr(notifications, 'PROJECT_ROOT', tmp_path)
+
+    assert notifications.load_webhook_url() == (
+        'https://discord.com/api/webhooks/shell/token'
+    )
 
 
 def test_discord_message_stays_within_limit():

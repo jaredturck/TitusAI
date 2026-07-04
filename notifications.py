@@ -3,23 +3,21 @@ import os
 import queue
 import socket
 import threading
-from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from config import DISCORD_CONFIG
+from dotenv import dotenv_values
+
+from config import DISCORD_CONFIG, PROJECT_ROOT
 
 
-def load_webhook_url(config):
-    webhook_url = str(config.get('webhook_url') or '').strip()
-    if webhook_url:
-        return webhook_url
+def load_webhook_url():
+    environment_url = os.environ.get('STATUS_WEBHOOK', '').strip()
+    if environment_url:
+        return environment_url
 
-    webhook_path = Path(config['webhook_path'])
-    if webhook_path.exists():
-        return webhook_path.read_text(encoding='utf-8').strip()
-
-    return os.environ.get('STATUS_WEBHOOK', '').strip()
+    values = dotenv_values(PROJECT_ROOT / '.env')
+    return str(values.get('STATUS_WEBHOOK') or '').strip()
 
 
 def format_discord_message(title, fields=None, body=None):
@@ -40,7 +38,7 @@ def format_discord_message(title, fields=None, body=None):
 class DiscordNotifier:
     def __init__(self, config=None):
         self.config = DISCORD_CONFIG if config is None else config
-        self.webhook_url = load_webhook_url(self.config)
+        self.webhook_url = load_webhook_url()
         self.enabled = bool(self.config['enabled'] and self.webhook_url)
         self.messages = queue.Queue()
         self.worker = None
@@ -48,8 +46,8 @@ class DiscordNotifier:
 
         if self.config['enabled'] and not self.webhook_url:
             print(
-                '[!] Discord notifications are enabled but no webhook was found at '
-                f'{self.config["webhook_path"]}'
+                '[!] Discord notifications are enabled but STATUS_WEBHOOK '
+                'is missing from .env'
             )
 
         if self.enabled:
@@ -117,7 +115,7 @@ class DiscordNotifier:
 def main():
     notifier = DiscordNotifier()
     if not notifier.enabled:
-        print('[!] Add your Discord webhook to discord_webhook.txt and try again')
+        print('[!] Add STATUS_WEBHOOK to .env and try again')
         return 1
 
     notifier.send(

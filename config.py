@@ -157,13 +157,13 @@ DISCORD_CONFIG = {
 }
 
 GENERATION_CONFIG = {
-    'max_new_tokens': 256,
+    'max_new_tokens': 64,
     'temperature': 0.7,
     'top_k': 50,
     'top_p': 0.9,
     'repetition_penalty': 1.08,
     'no_repeat_ngram_size': 4,
-    'reasoning_token_budget': 192,
+    'reasoning_token_budget': 32,
 }
 
 INFERENCE_CONFIG = {

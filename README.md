@@ -87,6 +87,8 @@ torchrun --nnodes=1 --nproc_per_node=2 --master_addr=127.0.0.1 --master_port=296
 
 `check_setup.py` downloads and pins the SmolLM2 tokenizer locally, constructs the full model on the meta device to verify its parameter count, and reads one record from every configured dataset source. It fails immediately if credentials, source names, configurations, or text fields are incorrect.
 
+Both `check_setup.py` and `prepare_data.py` use a deliberate successful hard exit after all work and output flushing have completed. This bypasses a PyArrow background-thread finalization crash seen on some Python 3.12 systems; real exceptions still propagate normally and return a non-zero exit status.
+
 The setup check does not shuffle source streams. SwallowCode is streamed directly from the official Stage 5 JSONL files under `stage5-auto-format/python/medium/`. Its loader parses only the `text` field and ignores every metadata column, avoiding schema conflicts between raw shards. DCLM 100BT is already globally shuffled, while the full preparation run applies a deterministic bounded shuffle to sources that are not pre-shuffled.
 
 ## Base-pretraining mixture

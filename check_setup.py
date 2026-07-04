@@ -4,6 +4,7 @@ from config import DATA_SOURCES, MODEL_CONFIG, SPECIAL_TOKENS
 from data_utils import extract_first
 from model import TitusModel
 from prepare_data import load_source_stream
+from process_utils import hard_exit_after_success
 from tokenizer import document_end_token_id, get_tokenizer_metadata, load_tokenizer, save_tokenizer
 
 
@@ -61,5 +62,10 @@ def main():
     print('[+] Setup check complete')
 
 
-if __name__ == '__main__':
+def run():
     main()
+    hard_exit_after_success()
+
+
+if __name__ == '__main__':
+    run()

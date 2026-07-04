@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.4
+
+- Avoid the PyArrow interpreter-finalization crash after successful dataset streaming.
+- Flush console output and terminate cleanly after `check_setup.py` and `prepare_data.py` complete.
+- Preserve normal exception handling and non-zero failures when either script raises an error.
+
 ## 1.0.3
 
 - Replaced the gated Nemotron-CC-v2 general-web source with the public, globally shuffled DCLM 100BT dataset.

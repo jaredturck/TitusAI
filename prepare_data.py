@@ -4,6 +4,8 @@ import random
 import time
 from pathlib import Path
 
+from process_utils import hard_exit_after_success
+
 from config import (
     DATA_SOURCES,
     PREPARE_CONFIG,
@@ -353,5 +355,10 @@ def main():
     )
 
 
-if __name__ == '__main__':
+def run():
     main()
+    hard_exit_after_success()
+
+
+if __name__ == '__main__':
+    run()

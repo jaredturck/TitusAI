@@ -67,10 +67,11 @@ Authenticate before preparing data:
 hf auth login
 ```
 
-The two NVIDIA sources are gated. Accept their data-access terms on Hugging Face before running the setup check:
+The NVIDIA mathematics source is gated. Accept its data-access terms on Hugging Face before running the setup check:
 
-- `nvidia/Nemotron-CC-v2`
 - `nvidia/Nemotron-CC-Math-v1`
+
+The general-web source, `HuggingFaceFW/dclm_100BT-shuffled`, is public and does not require a separate access request.
 
 Dataset licenses and redistribution conditions remain the responsibility of the person running the training job. The preparation manifest records source names and tokenizer metadata, but raw source data is not redistributed by this project.
 
@@ -86,7 +87,7 @@ torchrun --nnodes=1 --nproc_per_node=2 --master_addr=127.0.0.1 --master_port=296
 
 `check_setup.py` downloads and pins the SmolLM2 tokenizer locally, constructs the full model on the meta device to verify its parameter count, and reads one record from every configured dataset source. It fails immediately if credentials, source names, configurations, or text fields are incorrect.
 
-The setup check does not shuffle source streams. SwallowCode is streamed directly from the official Stage 5 JSONL files under `stage5-auto-format/python/medium/`. Its loader parses only the `text` field and ignores every metadata column, avoiding schema conflicts between raw shards. The full preparation run applies a deterministic bounded shuffle after the text stream has opened successfully.
+The setup check does not shuffle source streams. SwallowCode is streamed directly from the official Stage 5 JSONL files under `stage5-auto-format/python/medium/`. Its loader parses only the `text` field and ignores every metadata column, avoiding schema conflicts between raw shards. DCLM 100BT is already globally shuffled, while the full preparation run applies a deterministic bounded shuffle to sources that are not pre-shuffled.
 
 ## Base-pretraining mixture
 
@@ -94,7 +95,7 @@ The default 13-billion-token target is defined in `config.py`:
 
 | Source | Tokens | Share |
 |---|---:|---:|
-| Nemotron-CC-v2 Medium-High-Quality | 10.40B | 80% |
+| DCLM 100BT shuffled | 10.40B | 80% |
 | SwallowCode-v2 stage 5 | 1.56B | 12% |
 | Nemotron-CC-Math 4+ | 0.78B | 6% |
 | Cosmopedia v2 | 0.26B | 2% |

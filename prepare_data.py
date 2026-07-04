@@ -139,7 +139,7 @@ def load_source_stream(source, shuffle=True):
         arguments['columns'] = source['columns']
 
     dataset = load_dataset(**arguments)
-    if not shuffle:
+    if not shuffle or source.get('pre_shuffled', False):
         return dataset
 
     return dataset.shuffle(

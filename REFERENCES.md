@@ -25,8 +25,8 @@ The project deliberately uses a conservative modern dense decoder rather than co
 
 ## Data
 
-- NVIDIA Nemotron-CC-v2  
-  https://huggingface.co/datasets/nvidia/Nemotron-CC-v2
+- Hugging Face DCLM 100BT (globally shuffled)  
+  https://huggingface.co/datasets/HuggingFaceFW/dclm_100BT-shuffled
 - NVIDIA Nemotron-CC-Math-v1  
   https://huggingface.co/datasets/nvidia/Nemotron-CC-Math-v1
 - SwallowCode-v2  

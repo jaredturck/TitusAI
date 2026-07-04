@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.3
+
+- Replaced the gated Nemotron-CC-v2 general-web source with the public, globally shuffled DCLM 100BT dataset.
+- Preserve the existing 10.4-billion-token general-text allocation and skip redundant buffered shuffling for pre-shuffled sources.
+- Updated source documentation and added regression coverage for the configured general-web dataset.
+
 ## 1.0.2
 
 - Replaced the incomplete SwallowCode Parquet-viewer path with direct streaming from the official Stage 5 JSONL files.

@@ -168,3 +168,43 @@ def test_setup_check_closes_source_iterator(monkeypatch):
     check_setup.check_datasets()
 
     assert iterator.closed
+
+
+def test_pre_shuffled_source_is_not_shuffled_again(monkeypatch):
+    dataset = FakeDataset()
+
+    def load_dataset(**arguments):
+        return dataset
+
+    monkeypatch.setitem(
+        sys.modules,
+        'datasets',
+        SimpleNamespace(load_dataset=load_dataset),
+    )
+
+    source = {
+        'name': 'dclm',
+        'dataset': 'HuggingFaceFW/dclm_100BT-shuffled',
+        'config': None,
+        'data_dir': None,
+        'split': 'train',
+        'columns': ['text'],
+        'pre_shuffled': True,
+    }
+
+    result = prepare_data.load_source_stream(source)
+
+    assert result is dataset
+    assert dataset.shuffle_calls == []
+
+
+def test_general_web_source_uses_public_dclm():
+    from config import DATA_SOURCES
+
+    source = next(source for source in DATA_SOURCES if source['name'] == 'dclm')
+
+    assert source['dataset'] == 'HuggingFaceFW/dclm_100BT-shuffled'
+    assert source['config'] is None
+    assert source['target_tokens'] == 10_400_000_000
+    assert source['pre_shuffled'] is True
+    assert all(source['dataset'] != 'nvidia/Nemotron-CC-v2' for source in DATA_SOURCES)

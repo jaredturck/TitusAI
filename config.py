@@ -122,9 +122,9 @@ DATA_SOURCES = [
         'paragraph_deduplication': True,
     },
     {
-        'name': 'nemotron_cc_hq',
-        'dataset': 'nvidia/Nemotron-CC-v2',
-        'config': 'Medium-High-Quality',
+        'name': 'dclm',
+        'dataset': 'HuggingFaceFW/dclm_100BT-shuffled',
+        'config': None,
         'data_dir': None,
         'split': 'train',
         'text_fields': ['text'],
@@ -132,6 +132,7 @@ DATA_SOURCES = [
         'columns': ['text'],
         'target_tokens': 10_400_000_000,
         'paragraph_deduplication': True,
+        'pre_shuffled': True,
     },
 ]
 

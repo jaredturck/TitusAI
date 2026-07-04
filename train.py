@@ -64,7 +64,7 @@ def training_status_fields(run_name, global_step, tokens_seen, loss, smoothed_lo
         ('Validation loss', 'Not run yet' if validation_loss is None else f'{validation_loss:.4f}'),
         ('Learning rate', f'{learning_rate:.3e}'),
         ('Tokens processed', f'{tokens_seen:,} / {max_train_tokens:,}', False),
-        ('Throughput', f'{tokens_per_second:,} tokens/s'),
+        ('Tokens per second', f'{tokens_per_second:,} TPS'),
         ('Elapsed', format_duration(elapsed_seconds)),
         ('ETA', eta),
         ('Peak GPU memory', peak_gpu_memory),
@@ -451,6 +451,7 @@ def main():
             ],
             description='Training is online and Discord monitoring is active.',
             color='blue',
+            include_gpu_stats=True,
         )
 
     optimizer.zero_grad(set_to_none=True)
@@ -599,6 +600,7 @@ def main():
                             TRAIN_CONFIG['max_train_tokens'],
                         ),
                         color='purple',
+                        include_gpu_stats=True,
                     )
                     status_timer = now
 

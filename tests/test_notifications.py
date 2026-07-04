@@ -2,7 +2,14 @@ import json
 import threading
 
 import notifications
-from notifications import DiscordNotifier, EMBED_COLORS, format_embed
+from notifications import (
+    DiscordNotifier,
+    EMBED_COLORS,
+    format_embed,
+    gpu_telemetry_fields,
+    parse_gpu_query,
+    parse_performance_reasons,
+)
 from train import (
     format_duration,
     format_progress_bar,
@@ -183,7 +190,148 @@ def test_training_status_formatting():
     assert fields['Smoothed loss'] == '4.3000'
     assert fields['Validation loss'] == '4.1000'
     assert fields['ETA'] == '1m 30s'
+    assert fields['Tokens per second'] == '100 TPS'
     assert fields['Peak GPU memory'] == '12.50 GB on rank 0'
     assert format_duration(90_061) == '1d 01h 01m'
     assert format_progress_bar(50, width=10) == '█████░░░░░'
     assert '10.00% complete' in training_status_description(1_000, 10_000)
+
+def test_gpu_query_parser_reports_both_cards():
+    output = (
+        '0, NVIDIA GeForce RTX 3090, 79, 100, 195.07, 300.00, 1875, 100\n'
+        '1, NVIDIA GeForce RTX 3090, 80, 100, 198.72, 300.00, 600, 100\n'
+    )
+
+    gpus = parse_gpu_query(output)
+
+    assert [gpu['index'] for gpu in gpus] == ['0', '1']
+    assert gpus[0]['temperature'] == '79'
+    assert gpus[1]['clock'] == '600'
+
+
+def test_performance_parser_ignores_counters():
+    output = """
+    Clocks Event Reasons
+        SW Power Cap                 : Not Active
+        HW Slowdown
+            HW Thermal Slowdown      : Not Active
+        SW Thermal Slowdown          : Active
+    Clocks Event Reasons Counters
+        SW Thermal Slowdown          : 644864106 us
+    """
+
+    thermal_active, power_cap_active = parse_performance_reasons(output)
+
+    assert thermal_active
+    assert not power_cap_active
+
+
+def test_gpu_fields_show_every_reported_gpu():
+    fields, throttled = gpu_telemetry_fields([
+        {
+            'index': '0',
+            'name': 'NVIDIA GeForce RTX 3090',
+            'temperature': '79',
+            'fan_speed': '100',
+            'power_draw': '195.07',
+            'power_limit': '300.00',
+            'clock': '1875',
+            'utilization': '100',
+            'thermal_throttling': False,
+            'power_capping': False,
+        },
+        {
+            'index': '1',
+            'name': 'NVIDIA GeForce RTX 3090',
+            'temperature': '80',
+            'fan_speed': '100',
+            'power_draw': '198.72',
+            'power_limit': '300.00',
+            'clock': '600',
+            'utilization': '100',
+            'thermal_throttling': True,
+            'power_capping': False,
+        },
+    ])
+
+    assert [field[0] for field in fields] == [
+        'GPU 0 — NVIDIA GeForce RTX 3090',
+        'GPU 1 — NVIDIA GeForce RTX 3090',
+    ]
+    assert '79°C' in fields[0][1]
+    assert '1,875 MHz' in fields[0][1]
+    assert 'THERMAL THROTTLING ACTIVE' in fields[1][1]
+    assert throttled == ['1']
+
+
+def test_notifier_adds_both_gpu_stats_on_background_thread(monkeypatch):
+    requests = []
+    telemetry_threads = []
+
+    def fake_urlopen(request, timeout):
+        requests.append((request, timeout))
+        return FakeResponse()
+
+    def fake_collect_gpu_telemetry():
+        telemetry_threads.append(threading.current_thread().name)
+        return [
+            {
+                'index': '0',
+                'name': 'RTX 3090',
+                'temperature': '79',
+                'fan_speed': '100',
+                'power_draw': '195',
+                'power_limit': '300',
+                'clock': '1875',
+                'utilization': '100',
+                'thermal_throttling': False,
+                'power_capping': False,
+            },
+            {
+                'index': '1',
+                'name': 'RTX 3090',
+                'temperature': '80',
+                'fan_speed': '100',
+                'power_draw': '199',
+                'power_limit': '300',
+                'clock': '600',
+                'utilization': '100',
+                'thermal_throttling': True,
+                'power_capping': False,
+            },
+        ], None
+
+    monkeypatch.setattr(notifications, 'urlopen', fake_urlopen)
+    monkeypatch.setattr(
+        notifications,
+        'collect_gpu_telemetry',
+        fake_collect_gpu_telemetry,
+    )
+    monkeypatch.setenv(
+        'STATUS_WEBHOOK',
+        'https://discord.com/api/webhooks/test/token',
+    )
+
+    notifier = DiscordNotifier(make_config())
+    notifier.send(
+        '📈 TitusAI training progress',
+        [('Tokens per second', '22,754 TPS')],
+        description='Training normally.',
+        color='purple',
+        include_gpu_stats=True,
+    )
+
+    assert notifier.close()
+    assert telemetry_threads == ['titus-discord-notifier']
+
+    payload = json.loads(requests[0][0].data.decode('utf-8'))
+    embed = payload['embeds'][0]
+    fields = {field['name']: field['value'] for field in embed['fields']}
+
+    assert embed['color'] == EMBED_COLORS['orange']
+    assert 'thermal throttling' in embed['title'].lower()
+    assert 'GPU 1' in embed['description']
+    assert fields['Tokens per second'] == '22,754 TPS'
+    assert 'GPU 0 — RTX 3090' in fields
+    assert 'GPU 1 — RTX 3090' in fields
+

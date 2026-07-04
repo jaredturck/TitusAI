@@ -68,7 +68,7 @@ python notifications.py
 STATUS_WEBHOOK=https://discord.com/api/webhooks/...
 ```
 
-Discord receives a startup embed, progress updates roughly every ten minutes, validation results, completion, interruption, and fatal-error notifications.
+Discord receives a startup embed, progress updates roughly every ten minutes, validation results, completion, interruption, and fatal-error notifications. Startup and progress embeds report both GPUs separately, including temperature, fan speed, clock, power draw and limit, utilization, and thermal-throttling status. The progress embed also shows current tokens per second and turns orange when either GPU is thermally throttling.
 
 ### 5. Train on both GPUs
 

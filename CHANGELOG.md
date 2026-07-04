@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.11
+
+- Report GPU 0 and GPU 1 separately in Discord startup and ten-minute progress embeds.
+- Show temperature, fan speed, SM clock, power draw and limit, utilization, and thermal-throttling state for every NVIDIA GPU.
+- Make tokens per second explicit and turn progress embeds orange when any GPU reports active thermal slowdown, while keeping all `nvidia-smi` work on the notifier thread.
+
 ## 1.0.8
 
 - Replace plain Discord status messages with structured embeds for startup, progress, validation, completion, interruption, and failure events.

@@ -1,8 +1,14 @@
 import json
+import threading
 
 import notifications
-from notifications import DiscordNotifier, format_discord_message
-from train import format_duration, training_status_fields
+from notifications import DiscordNotifier, EMBED_COLORS, format_embed
+from train import (
+    format_duration,
+    format_progress_bar,
+    training_status_description,
+    training_status_fields,
+)
 
 
 class FakeResponse:
@@ -25,7 +31,7 @@ def make_config():
     }
 
 
-def test_discord_notifier_posts_message(monkeypatch):
+def test_discord_notifier_posts_embed(monkeypatch):
     requests = []
 
     def fake_urlopen(request, timeout):
@@ -36,19 +42,54 @@ def test_discord_notifier_posts_message(monkeypatch):
     monkeypatch.setenv('STATUS_WEBHOOK', 'https://discord.com/api/webhooks/test/token')
 
     notifier = DiscordNotifier(make_config())
-    notifier.send('Training started', [('Step', '1'), ('Loss', '5.0000')])
+    notifier.send(
+        '📈 Training progress',
+        [('Step', '1'), ('Loss', '5.0000')],
+        description='`████░░░░` 50.00% complete',
+        color='purple',
+    )
 
     assert notifier.close()
     assert len(requests) == 1
 
     request, timeout = requests[0]
     payload = json.loads(request.data.decode('utf-8'))
+    embed = payload['embeds'][0]
+
     assert timeout == 1
     assert payload['username'] == 'TitusAI Test'
-    assert '**Training started**' in payload['content']
-    assert 'Step: 1' in payload['content']
     assert payload['allowed_mentions'] == {'parse': []}
+    assert 'content' not in payload
+    assert embed['title'] == '📈 Training progress'
+    assert embed['description'] == '`████░░░░` 50.00% complete'
+    assert embed['color'] == EMBED_COLORS['purple']
+    assert embed['fields'][0] == {
+        'name': 'Step',
+        'value': '1',
+        'inline': True,
+    }
+    assert 'timestamp' in embed
+    assert 'footer' in embed
 
+
+
+def test_embed_formatting_runs_on_background_thread(monkeypatch):
+    format_threads = []
+    original_format_embed = notifications.format_embed
+
+    def tracked_format_embed(**event):
+        format_threads.append(threading.current_thread().name)
+        return original_format_embed(**event)
+
+    monkeypatch.setattr(notifications, 'format_embed', tracked_format_embed)
+    monkeypatch.setattr(notifications, 'urlopen', lambda request, timeout: FakeResponse())
+    monkeypatch.setenv('STATUS_WEBHOOK', 'https://discord.com/api/webhooks/test/token')
+
+    notifier = DiscordNotifier(make_config())
+    notifier.send('Training progress', [('Loss', '4.0000')])
+
+    assert notifier.close()
+    assert format_threads == ['titus-discord-notifier']
 
 def test_missing_webhook_disables_notifier(monkeypatch, tmp_path):
     monkeypatch.delenv('STATUS_WEBHOOK', raising=False)
@@ -103,27 +144,46 @@ def test_shell_webhook_overrides_project_env(monkeypatch, tmp_path):
     )
 
 
-def test_discord_message_stays_within_limit():
-    message = format_discord_message('Status', body='x' * 3000)
-    assert len(message) == 2000
+def test_embed_respects_discord_limits():
+    fields = [(f'Field {index}', 'x' * 2000) for index in range(30)]
+    embed = format_embed(
+        't' * 400,
+        fields=fields,
+        description='d' * 5000,
+        footer='f' * 3000,
+    )
+
+    assert len(embed['title']) == 256
+    assert len(embed['description']) == 4096
+    assert len(embed['footer']['text']) == 2048
+    assert len(embed['fields']) == 25
+    assert all(len(field['value']) == 1024 for field in embed['fields'])
 
 
 def test_training_status_formatting():
-    fields = dict(training_status_fields(
-        'pretrain',
-        25,
-        1_000,
-        4.25,
-        4.1,
-        3e-4,
-        100,
-        90,
-        10_000,
-        'snapshot_01.pt',
-    ))
+    fields = dict(
+        (field[0], field[1])
+        for field in training_status_fields(
+            'pretrain',
+            25,
+            1_000,
+            4.25,
+            4.3,
+            4.1,
+            3e-4,
+            100,
+            90,
+            10_000,
+            'snapshot_01.pt',
+            '12.50 GB on rank 0',
+        )
+    )
 
-    assert fields['Progress'] == '10.00%'
-    assert fields['Loss'] == '4.2500'
-    assert fields['Validation'] == '4.1000'
+    assert fields['Current loss'] == '4.2500'
+    assert fields['Smoothed loss'] == '4.3000'
+    assert fields['Validation loss'] == '4.1000'
     assert fields['ETA'] == '1m 30s'
+    assert fields['Peak GPU memory'] == '12.50 GB on rank 0'
     assert format_duration(90_061) == '1d 01h 01m'
+    assert format_progress_bar(50, width=10) == '█████░░░░░'
+    assert '10.00% complete' in training_status_description(1_000, 10_000)

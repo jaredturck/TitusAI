@@ -189,14 +189,16 @@ The `.env` file must contain `STATUS_WEBHOOK=<your webhook URL>`. It is ignored 
 
 `python notifications.py` sends a test message and exits with status zero when Discord accepts it.
 
-During training, Discord receives:
+During training, Discord receives colour-coded embeds:
 
-- A startup message with the host, GPUs, parameter count, dataset size, and resume state
-- A detailed progress report approximately every ten minutes
-- Validation-loss reports
-- Completion, interruption, and fatal-error notices
+- A blue startup embed with the host, GPUs, parameter count, context length, effective batch, dataset size, and resume state
+- A purple progress embed approximately every ten minutes
+- Gold validation embeds and green new-best validation embeds
+- Green completion, orange safe-interruption, and red fatal-error embeds
 
-Progress reports include the optimizer step, tokens processed, percentage complete, training and validation loss, learning rate, throughput, elapsed time, estimated time remaining, and latest inference snapshot. Webhook requests run on a background thread with a five-second timeout, so a slow or unavailable Discord server cannot pause or terminate training.
+Progress embeds include a compact progress bar, optimizer step, tokens processed, current and smoothed training loss, latest validation loss, learning rate, throughput, elapsed time, estimated time remaining, latest inference snapshot, and rank-zero peak GPU memory.
+
+Notification work is deliberately kept out of the performance-critical path. Only rank zero copies already-available scalar values at the existing reporting intervals; embed formatting, JSON serialization, and the HTTP request all run on the notifier's background thread. No Discord code runs inside model forward, backward, optimizer, or DDP synchronization operations, and a slow or unavailable Discord server cannot pause or terminate training.
 
 The interval and webhook settings are in `DISCORD_CONFIG` inside `config.py`. Set `DISCORD_CONFIG['enabled']` to `False` to disable notifications.
 

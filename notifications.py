@@ -3,12 +3,24 @@ import os
 import queue
 import socket
 import threading
+from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from dotenv import dotenv_values
 
 from config import DISCORD_CONFIG, PROJECT_ROOT
+
+
+EMBED_COLORS = {
+    'blue': 0x3498DB,
+    'purple': 0x9B59B6,
+    'green': 0x2ECC71,
+    'orange': 0xF39C12,
+    'red': 0xE74C3C,
+    'gold': 0xF1C40F,
+    'grey': 0x95A5A6,
+}
 
 
 def load_webhook_url():
@@ -20,19 +32,45 @@ def load_webhook_url():
     return str(values.get('STATUS_WEBHOOK') or '').strip()
 
 
-def format_discord_message(title, fields=None, body=None):
-    lines = [f'**{title}**']
+def clean_text(value, maximum_length):
+    text = str(value)
+    if len(text) <= maximum_length:
+        return text
+    return text[:maximum_length - 1] + '…'
+
+
+def format_embed(title, fields=None, description=None, color='blue', footer=None):
+    embed = {
+        'title': clean_text(title, 256),
+        'color': EMBED_COLORS.get(color, EMBED_COLORS['blue']),
+        'timestamp': datetime.now(timezone.utc).isoformat(),
+        'footer': {
+            'text': clean_text(
+                footer or f'TitusAI Training Monitor • {socket.gethostname()}',
+                2048,
+            ),
+        },
+    }
+
+    if description:
+        embed['description'] = clean_text(description, 4096)
 
     if fields:
-        lines.append('```text')
-        for label, value in fields:
-            lines.append(f'{label}: {value}')
-        lines.append('```')
+        embed['fields'] = []
+        for field in fields[:25]:
+            if len(field) == 2:
+                name, value = field
+                inline = True
+            else:
+                name, value, inline = field
 
-    if body:
-        lines.append(str(body))
+            embed['fields'].append({
+                'name': clean_text(name, 256),
+                'value': clean_text(value, 1024),
+                'inline': bool(inline),
+            })
 
-    return '\n'.join(lines)[:2000]
+    return embed
 
 
 class DiscordNotifier:
@@ -58,27 +96,34 @@ class DiscordNotifier:
             )
             self.worker.start()
 
-    def send(self, title, fields=None, body=None):
+    def send(self, title, fields=None, body=None, color='blue', description=None, footer=None):
         if not self.enabled:
             return
 
-        message = format_discord_message(title, fields, body)
-        self.messages.put(message)
+        event = {
+            'title': title,
+            'fields': fields,
+            'description': description if description is not None else body,
+            'color': color,
+            'footer': footer,
+        }
+        self.messages.put(event)
 
     def _run(self):
         while True:
-            message = self.messages.get()
-            if message is None:
+            event = self.messages.get()
+            if event is None:
                 self.messages.task_done()
                 return
 
-            self._post(message)
+            embed = format_embed(**event)
+            self._post(embed)
             self.messages.task_done()
 
-    def _post(self, message):
+    def _post(self, embed):
         payload = {
-            'content': message,
             'username': self.config['username'],
+            'embeds': [embed],
             'allowed_mentions': {'parse': []},
         }
         request = Request(
@@ -119,11 +164,14 @@ def main():
         return 1
 
     notifier.send(
-        'TitusAI Discord notifications configured',
+        '✅ TitusAI notifications configured',
         [
             ('Host', socket.gethostname()),
+            ('Delivery', 'Discord embed'),
             ('Status', 'Webhook test successful'),
         ],
+        description='Remote training updates are ready.',
+        color='green',
     )
 
     if notifier.close():

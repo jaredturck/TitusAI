@@ -43,7 +43,13 @@ def format_duration(seconds):
     return f'{minutes}m {seconds:02d}s'
 
 
-def training_status_fields(run_name, global_step, tokens_seen, loss, validation_loss, learning_rate, tokens_per_second, elapsed_seconds, max_train_tokens, snapshot_name):
+def format_progress_bar(progress, width=18):
+    progress = min(max(progress, 0.0), 100.0)
+    filled = round(width * progress / 100)
+    return '█' * filled + '░' * (width - filled)
+
+
+def training_status_fields(run_name, global_step, tokens_seen, loss, smoothed_loss, validation_loss, learning_rate, tokens_per_second, elapsed_seconds, max_train_tokens, snapshot_name, peak_gpu_memory):
     progress = 100 * tokens_seen / max_train_tokens
     remaining_tokens = max(0, max_train_tokens - tokens_seen)
     eta = 'Calculating'
@@ -52,17 +58,30 @@ def training_status_fields(run_name, global_step, tokens_seen, loss, validation_
 
     return [
         ('Run', run_name),
-        ('Step', f'{global_step:,}'),
-        ('Tokens', f'{tokens_seen:,} / {max_train_tokens:,}'),
-        ('Progress', f'{progress:.2f}%'),
-        ('Loss', 'Unavailable' if loss is None else f'{loss:.4f}'),
-        ('Validation', 'Not run' if validation_loss is None else f'{validation_loss:.4f}'),
+        ('Optimizer step', f'{global_step:,}'),
+        ('Current loss', 'Unavailable' if loss is None else f'{loss:.4f}'),
+        ('Smoothed loss', 'Unavailable' if smoothed_loss is None else f'{smoothed_loss:.4f}'),
+        ('Validation loss', 'Not run yet' if validation_loss is None else f'{validation_loss:.4f}'),
         ('Learning rate', f'{learning_rate:.3e}'),
+        ('Tokens processed', f'{tokens_seen:,} / {max_train_tokens:,}', False),
         ('Throughput', f'{tokens_per_second:,} tokens/s'),
         ('Elapsed', format_duration(elapsed_seconds)),
         ('ETA', eta),
-        ('Latest snapshot', snapshot_name),
+        ('Peak GPU memory', peak_gpu_memory),
+        ('Latest snapshot', snapshot_name, False),
     ]
+
+
+def training_status_description(tokens_seen, max_train_tokens):
+    progress = 100 * tokens_seen / max_train_tokens
+    return f'`{format_progress_bar(progress)}` **{progress:.2f}% complete**'
+
+
+def format_peak_gpu_memory(device):
+    if device.type != 'cuda':
+        return 'CPU training'
+    memory_gb = torch.cuda.max_memory_allocated(device) / 1024 ** 3
+    return f'{memory_gb:.2f} GB on rank 0'
 
 
 class WarmupCosineScheduler:
@@ -415,18 +434,23 @@ def main():
         print(f'[+] Planned optimizer steps: {total_steps:,}')
 
         notifier.send(
-            'TitusAI training started',
+            '🚀 TitusAI training started',
             [
                 ('Run', run_name),
                 ('Host', socket.gethostname()),
-                ('Devices', gpu_names),
-                ('DDP processes', world_size),
-                ('Parameters', f'{parameter_count:,}'),
+                ('Mode', 'Resumed' if latest_checkpoint is not None else 'Fresh run'),
+                ('Model', f'{parameter_count:,} parameters'),
+                ('Context length', f'{model_config["max_seq_len"]:,} tokens'),
+                ('Devices', gpu_names, False),
+                ('DDP processes', str(world_size)),
+                ('Effective batch', f'{tokens_per_update:,} tokens/update'),
+                ('Planned steps', f'{total_steps:,}'),
                 ('Training sequences', f'{len(train_dataset):,}'),
                 ('Target tokens', f'{TRAIN_CONFIG["max_train_tokens"]:,}'),
-                ('Planned steps', f'{total_steps:,}'),
-                ('Resume', resume_status),
+                ('Checkpoint', resume_status, False),
             ],
+            description='Training is online and Discord monitoring is active.',
+            color='blue',
         )
 
     optimizer.zero_grad(set_to_none=True)
@@ -440,6 +464,7 @@ def main():
     accumulation_step = 0
     last_validation_loss = None
     latest_loss = None
+    smoothed_loss = None
     latest_tokens_per_second = 0
     latest_snapshot_name = 'Not saved yet'
 
@@ -515,6 +540,11 @@ def main():
                     latest_loss = float(output['loss'].item())
 
                 if rank == 0 and now - log_timer >= TRAIN_CONFIG['log_interval_seconds']:
+                    if smoothed_loss is None:
+                        smoothed_loss = latest_loss
+                    else:
+                        smoothed_loss = 0.95 * smoothed_loss + 0.05 * latest_loss
+
                     token_delta = tokens_seen - log_tokens
                     latest_tokens_per_second = int(token_delta / (now - log_timer))
                     progress = 100 * tokens_seen / TRAIN_CONFIG['max_train_tokens']
@@ -549,19 +579,26 @@ def main():
 
                 if rank == 0 and now - status_timer >= DISCORD_CONFIG['status_interval_seconds']:
                     notifier.send(
-                        'TitusAI training status',
+                        '📈 TitusAI training progress',
                         training_status_fields(
                             run_name,
                             global_step,
                             tokens_seen,
                             latest_loss,
+                            smoothed_loss,
                             last_validation_loss,
                             scheduler.get_last_lr()[0],
                             latest_tokens_per_second,
                             now - training_start,
                             TRAIN_CONFIG['max_train_tokens'],
                             latest_snapshot_name,
+                            format_peak_gpu_memory(device),
                         ),
+                        description=training_status_description(
+                            tokens_seen,
+                            TRAIN_CONFIG['max_train_tokens'],
+                        ),
+                        color='purple',
                     )
                     status_timer = now
 
@@ -584,15 +621,25 @@ def main():
                             f'best={best_validation_loss:.4f}'
                         )
                         notifier.send(
-                            'TitusAI validation complete',
+                            '✅ New best validation loss' if validation_improved else '🧪 Validation complete',
                             [
                                 ('Run', run_name),
-                                ('Step', f'{global_step:,}'),
-                                ('Tokens', f'{tokens_seen:,}'),
+                                ('Optimizer step', f'{global_step:,}'),
                                 ('Validation loss', f'{last_validation_loss:.4f}'),
                                 ('Best validation loss', f'{best_validation_loss:.4f}'),
-                                ('Improved', 'Yes' if validation_improved else 'No'),
+                                ('Current train loss', 'Unavailable' if latest_loss is None else f'{latest_loss:.4f}'),
+                                ('Smoothed train loss', 'Unavailable' if smoothed_loss is None else f'{smoothed_loss:.4f}'),
+                                ('Tokens processed', f'{tokens_seen:,} / {TRAIN_CONFIG["max_train_tokens"]:,}', False),
                             ],
+                            description=(
+                                'The model reached a new best validation score.'
+                                if validation_improved
+                                else training_status_description(
+                                    tokens_seen,
+                                    TRAIN_CONFIG['max_train_tokens'],
+                                )
+                            ),
+                            color='green' if validation_improved else 'gold',
                         )
 
                 periodic_checkpoint = (
@@ -659,19 +706,23 @@ def main():
             latest_snapshot_name = destination.name
             print(f'[+] Final snapshot: {destination.name}')
             notifier.send(
-                'TitusAI training complete',
+                '🏁 TitusAI training complete',
                 training_status_fields(
                     run_name,
                     global_step,
                     tokens_seen,
                     latest_loss,
+                    smoothed_loss,
                     last_validation_loss,
                     scheduler.get_last_lr()[0],
                     latest_tokens_per_second,
                     time.monotonic() - training_start,
                     TRAIN_CONFIG['max_train_tokens'],
                     latest_snapshot_name,
+                    format_peak_gpu_memory(device),
                 ),
+                description='Training finished and the final checkpoint is safely stored.',
+                color='green',
             )
 
     except KeyboardInterrupt:
@@ -704,32 +755,38 @@ def main():
             latest_snapshot_name = destination.name
             print(f'\n[+] Interrupted; saved snapshot: {destination.name}')
             notifier.send(
-                'TitusAI training interrupted',
+                '⏸️ TitusAI training interrupted safely',
                 training_status_fields(
                     run_name,
                     global_step,
                     tokens_seen,
                     latest_loss,
+                    smoothed_loss,
                     last_validation_loss,
                     scheduler.get_last_lr()[0],
                     latest_tokens_per_second,
                     time.monotonic() - training_start,
                     TRAIN_CONFIG['max_train_tokens'],
                     latest_snapshot_name,
+                    format_peak_gpu_memory(device),
                 ),
+                description='The current checkpoint and inference snapshot were saved before shutdown.',
+                color='orange',
             )
 
     except Exception as error:
         if rank == 0:
             notifier.send(
-                'TitusAI training failed',
+                '❌ TitusAI training failed',
                 [
                     ('Run', run_name),
-                    ('Step', f'{global_step:,}'),
-                    ('Tokens', f'{tokens_seen:,}'),
+                    ('Optimizer step', f'{global_step:,}'),
+                    ('Tokens processed', f'{tokens_seen:,}'),
                     ('Error type', type(error).__name__),
+                    ('Latest snapshot', latest_snapshot_name, False),
                 ],
-                str(error),
+                description=f'```text\n{str(error)}\n```',
+                color='red',
             )
         raise
 

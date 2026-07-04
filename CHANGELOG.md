@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.8
+
+- Replace plain Discord status messages with structured embeds for startup, progress, validation, completion, interruption, and failure events.
+- Add progress bars, smoothed loss, ETA, throughput, learning rate, snapshot details, and rank-zero peak GPU memory to remote training updates.
+- Keep notification formatting and HTTP delivery on the existing background worker so the training hot path performs no network or JSON work.
+
 ## 1.0.7
 
 - Fix manifest generation to use the actual `SequencePacker` statistics and shared manifest writer.

@@ -37,6 +37,7 @@ TitusAI/
 ├── prepare_instructions.py    Smol-SmolTalk assistant-only SFT pipeline
 ├── dataset.py                 Memory-mapped runtime dataset and shard sampler
 ├── train.py                   BF16 DistributedDataParallel training
+├── notifications.py           Non-blocking Discord training updates
 ├── checkpoint.py              Rolling snapshots and resumable checkpoints
 ├── generate.py                Sampling, KV-cache generation, and response parsing
 ├── inference.py               CPU-only interactive inspection
@@ -167,6 +168,31 @@ If the initial microbatch does not fit, reduce `micro_batch_size` and increase `
 ### Packed-document attention
 
 Targets that cross document boundaries are always masked. `isolate_packed_documents` is disabled by default so PyTorch can use its optimized causal SDPA kernel. Setting it to `True` additionally blocks attention across packed documents, but the explicit block mask is slower and consumes more memory.
+
+
+## Discord training status
+
+Discord notifications are enabled by default and are sent only by DDP rank zero. Create a private webhook in the Discord channel you want to monitor, then save its URL locally:
+
+```bash
+cp discord_webhook.example.txt discord_webhook.txt
+nano discord_webhook.txt
+chmod 600 discord_webhook.txt
+python notifications.py
+```
+
+`python notifications.py` sends a test message and exits with status zero when Discord accepts it. `discord_webhook.txt` is ignored by Git and must contain only the webhook URL; the original `STATUS_WEBHOOK` environment variable is also accepted as a compatibility fallback.
+
+During training, Discord receives:
+
+- A startup message with the host, GPUs, parameter count, dataset size, and resume state
+- A detailed progress report approximately every ten minutes
+- Validation-loss reports
+- Completion, interruption, and fatal-error notices
+
+Progress reports include the optimizer step, tokens processed, percentage complete, training and validation loss, learning rate, throughput, elapsed time, estimated time remaining, and latest inference snapshot. Webhook requests run on a background thread with a five-second timeout, so a slow or unavailable Discord server cannot pause or terminate training.
+
+The interval and webhook settings are in `DISCORD_CONFIG` inside `config.py`. Set `DISCORD_CONFIG['enabled']` to `False` to disable notifications.
 
 ## Rolling snapshots and checkpoints
 

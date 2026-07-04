@@ -2,6 +2,7 @@ import contextlib
 import math
 import os
 import random
+import socket
 import time
 
 import numpy as np
@@ -19,12 +20,49 @@ from checkpoint import (
 )
 from config import (
     CHECKPOINT_PATH,
+    DISCORD_CONFIG,
     MODEL_CONFIG,
     SNAPSHOT_PATH,
     TRAIN_CONFIG,
 )
 from dataset import ShardShuffleSampler, TitusDataset
 from model import TitusModel
+from notifications import DiscordNotifier
+
+
+def format_duration(seconds):
+    seconds = max(0, int(seconds))
+    days, seconds = divmod(seconds, 86_400)
+    hours, seconds = divmod(seconds, 3_600)
+    minutes, seconds = divmod(seconds, 60)
+
+    if days:
+        return f'{days}d {hours:02d}h {minutes:02d}m'
+    if hours:
+        return f'{hours}h {minutes:02d}m {seconds:02d}s'
+    return f'{minutes}m {seconds:02d}s'
+
+
+def training_status_fields(run_name, global_step, tokens_seen, loss, validation_loss, learning_rate, tokens_per_second, elapsed_seconds, max_train_tokens, snapshot_name):
+    progress = 100 * tokens_seen / max_train_tokens
+    remaining_tokens = max(0, max_train_tokens - tokens_seen)
+    eta = 'Calculating'
+    if tokens_per_second > 0:
+        eta = format_duration(remaining_tokens / tokens_per_second)
+
+    return [
+        ('Run', run_name),
+        ('Step', f'{global_step:,}'),
+        ('Tokens', f'{tokens_seen:,} / {max_train_tokens:,}'),
+        ('Progress', f'{progress:.2f}%'),
+        ('Loss', 'Unavailable' if loss is None else f'{loss:.4f}'),
+        ('Validation', 'Not run' if validation_loss is None else f'{validation_loss:.4f}'),
+        ('Learning rate', f'{learning_rate:.3e}'),
+        ('Throughput', f'{tokens_per_second:,} tokens/s'),
+        ('Elapsed', format_duration(elapsed_seconds)),
+        ('ETA', eta),
+        ('Latest snapshot', snapshot_name),
+    ]
 
 
 class WarmupCosineScheduler:
@@ -264,6 +302,7 @@ def load_initial_weights(model, weights_path):
 
 def main():
     rank, local_rank, world_size, device = setup_distributed()
+    notifier = DiscordNotifier(DISCORD_CONFIG) if rank == 0 else None
     seed_everything(TRAIN_CONFIG['seed'], rank)
 
     torch.set_float32_matmul_precision('high')
@@ -361,21 +400,48 @@ def main():
     )
 
     if rank == 0:
+        parameter_count = model.module.parameter_count() if hasattr(model, 'module') else model.parameter_count()
+        gpu_names = ', '.join(
+            torch.cuda.get_device_name(index)
+            for index in range(torch.cuda.device_count())
+        ) or 'CPU'
+        resume_status = latest_checkpoint.name if latest_checkpoint is not None else 'New run'
+
         print(f'[+] Run: {run_name}')
-        print(f'[+] Parameters: {model.module.parameter_count() if hasattr(model, "module") else model.parameter_count():,}')
+        print(f'[+] Parameters: {parameter_count:,}')
         print(f'[+] Training sequences: {len(train_dataset):,}')
         print(f'[+] Validation sequences: {len(validation_dataset):,}')
         print(f'[+] World size: {world_size}')
         print(f'[+] Planned optimizer steps: {total_steps:,}')
 
+        notifier.send(
+            'TitusAI training started',
+            [
+                ('Run', run_name),
+                ('Host', socket.gethostname()),
+                ('Devices', gpu_names),
+                ('DDP processes', world_size),
+                ('Parameters', f'{parameter_count:,}'),
+                ('Training sequences', f'{len(train_dataset):,}'),
+                ('Target tokens', f'{TRAIN_CONFIG["max_train_tokens"]:,}'),
+                ('Planned steps', f'{total_steps:,}'),
+                ('Resume', resume_status),
+            ],
+        )
+
     optimizer.zero_grad(set_to_none=True)
-    snapshot_timer = time.monotonic()
-    log_timer = time.monotonic()
+    training_start = time.monotonic()
+    snapshot_timer = training_start
+    status_timer = training_start
+    log_timer = training_start
     log_tokens = tokens_seen
     accumulated_local_tokens = 0
     accumulated_local_samples = 0
     accumulation_step = 0
     last_validation_loss = None
+    latest_loss = None
+    latest_tokens_per_second = 0
+    latest_snapshot_name = 'Not saved yet'
 
     try:
         while tokens_seen < TRAIN_CONFIG['max_train_tokens']:
@@ -445,15 +511,18 @@ def main():
                 accumulation_step = 0
 
                 now = time.monotonic()
+                if rank == 0:
+                    latest_loss = float(output['loss'].item())
+
                 if rank == 0 and now - log_timer >= TRAIN_CONFIG['log_interval_seconds']:
                     token_delta = tokens_seen - log_tokens
-                    tokens_per_second = int(token_delta / (now - log_timer))
+                    latest_tokens_per_second = int(token_delta / (now - log_timer))
                     progress = 100 * tokens_seen / TRAIN_CONFIG['max_train_tokens']
                     learning_rate = scheduler.get_last_lr()[0]
                     print(
                         f'[+] step={global_step:,} tokens={tokens_seen:,} '
-                        f'loss={output["loss"].item():.4f} lr={learning_rate:.3e} '
-                        f'tps={tokens_per_second:,} progress={progress:.2f}%'
+                        f'loss={latest_loss:.4f} lr={learning_rate:.3e} '
+                        f'tps={latest_tokens_per_second:,} progress={progress:.2f}%'
                     )
                     log_timer = now
                     log_tokens = tokens_seen
@@ -472,10 +541,29 @@ def main():
                             tokens_seen,
                             last_validation_loss,
                         )
+                        latest_snapshot_name = destination.name
                         print(f'[+] Saved inference snapshot: {destination.name}')
                     if world_size > 1:
                         dist.barrier()
                     snapshot_timer = time.monotonic()
+
+                if rank == 0 and now - status_timer >= DISCORD_CONFIG['status_interval_seconds']:
+                    notifier.send(
+                        'TitusAI training status',
+                        training_status_fields(
+                            run_name,
+                            global_step,
+                            tokens_seen,
+                            latest_loss,
+                            last_validation_loss,
+                            scheduler.get_last_lr()[0],
+                            latest_tokens_per_second,
+                            now - training_start,
+                            TRAIN_CONFIG['max_train_tokens'],
+                            latest_snapshot_name,
+                        ),
+                    )
+                    status_timer = now
 
                 validation_improved = False
                 if global_step % TRAIN_CONFIG['validation_interval_steps'] == 0:
@@ -494,6 +582,17 @@ def main():
                         print(
                             f'[+] validation_loss={last_validation_loss:.4f} '
                             f'best={best_validation_loss:.4f}'
+                        )
+                        notifier.send(
+                            'TitusAI validation complete',
+                            [
+                                ('Run', run_name),
+                                ('Step', f'{global_step:,}'),
+                                ('Tokens', f'{tokens_seen:,}'),
+                                ('Validation loss', f'{last_validation_loss:.4f}'),
+                                ('Best validation loss', f'{best_validation_loss:.4f}'),
+                                ('Improved', 'Yes' if validation_improved else 'No'),
+                            ],
                         )
 
                 periodic_checkpoint = (
@@ -557,7 +656,23 @@ def main():
                 tokens_seen,
                 last_validation_loss,
             )
+            latest_snapshot_name = destination.name
             print(f'[+] Final snapshot: {destination.name}')
+            notifier.send(
+                'TitusAI training complete',
+                training_status_fields(
+                    run_name,
+                    global_step,
+                    tokens_seen,
+                    latest_loss,
+                    last_validation_loss,
+                    scheduler.get_last_lr()[0],
+                    latest_tokens_per_second,
+                    time.monotonic() - training_start,
+                    TRAIN_CONFIG['max_train_tokens'],
+                    latest_snapshot_name,
+                ),
+            )
 
     except KeyboardInterrupt:
         optimizer.zero_grad(set_to_none=True)
@@ -586,9 +701,41 @@ def main():
                 tokens_seen,
                 last_validation_loss,
             )
+            latest_snapshot_name = destination.name
             print(f'\n[+] Interrupted; saved snapshot: {destination.name}')
+            notifier.send(
+                'TitusAI training interrupted',
+                training_status_fields(
+                    run_name,
+                    global_step,
+                    tokens_seen,
+                    latest_loss,
+                    last_validation_loss,
+                    scheduler.get_last_lr()[0],
+                    latest_tokens_per_second,
+                    time.monotonic() - training_start,
+                    TRAIN_CONFIG['max_train_tokens'],
+                    latest_snapshot_name,
+                ),
+            )
+
+    except Exception as error:
+        if rank == 0:
+            notifier.send(
+                'TitusAI training failed',
+                [
+                    ('Run', run_name),
+                    ('Step', f'{global_step:,}'),
+                    ('Tokens', f'{tokens_seen:,}'),
+                    ('Error type', type(error).__name__),
+                ],
+                str(error),
+            )
+        raise
 
     finally:
+        if notifier is not None:
+            notifier.close()
         cleanup_distributed(world_size)
 
 

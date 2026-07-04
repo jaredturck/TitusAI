@@ -10,3 +10,4 @@ weights/checkpoints/*
 weights/snapshots/*
 !weights/snapshots/.gitkeep
 tokenizer_files/
+logs/

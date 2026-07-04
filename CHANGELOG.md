@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.5
+
+- Restore Discord training monitoring through a dedicated non-blocking notifier used only by DDP rank zero.
+- Send startup, ten-minute progress, validation, completion, interruption, and fatal-error messages without allowing webhook failures to interrupt training.
+- Keep webhook credentials in a Git-ignored local file, add a standalone webhook test command, and document the setup flow.
+
 ## 1.0.4
 
 - Avoid the PyArrow interpreter-finalization crash after successful dataset streaming.

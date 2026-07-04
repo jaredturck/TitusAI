@@ -1,5 +1,6 @@
-torch
-beautifulsoup4
-transformers
-sentencepiece
-python-dotenv
+torch>=2.5.0
+transformers>=4.46.0,<6.0.0
+datasets>=3.1.0,<5.0.0
+huggingface-hub>=0.26.0
+numpy>=1.26.0,<3.0.0
+pytest>=8.0.0

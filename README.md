@@ -1,55 +1,12 @@
 # TitusAI
 
-TitusAI is a readable, from-scratch PyTorch language-model project intended for studying how a modern compact LLM works end to end.
+TitusAI is a readable, from-scratch PyTorch language model built for learning how a modern compact LLM works end to end.
 
-The neural network is implemented directly in `model.py`. Hugging Face is used for the tokenizer and source datasets; it is not used to provide the model or training loop.
+The model, training loop, generation code, dataset pipeline, checkpointing, and CPU inference are implemented in this repository. Hugging Face is used only for the tokenizer and source datasets.
 
-## Architecture
+## Quick start
 
-The default model is a dense causal decoder with approximately 158.6 million parameters after the six Titus control tokens are added to the SmolLM2 tokenizer.
-
-| Component | Value |
-|---|---:|
-| Decoder layers | 30 |
-| Hidden dimension | 576 |
-| Query heads | 9 |
-| Key/value heads | 3 |
-| Head dimension | 64 |
-| Feed-forward layer | SwiGLU, width 2,000 |
-| Normalization | Pre-RMSNorm and QK-RMSNorm |
-| Position encoding | RoPE |
-| Context length | 2,048 |
-| Attention | Full causal grouped-query attention |
-| Output | Tied token embedding and full cross-entropy |
-| Dropout | 0 |
-
-The implementation includes an autoregressive KV cache, BF16 DDP training, masked instruction loss, rolling inference snapshots, and CPU-only interactive inference.
-
-## Project layout
-
-```text
-TitusAI/
-├── config.py                  Model, training, data, and inference settings
-├── tokenizer.py               SmolLM2 tokenizer configuration and chat formatting
-├── model.py                   Complete decoder architecture
-├── data_utils.py              Deduplication, packing, and shard writing
-├── prepare_data.py            Base-pretraining data pipeline
-├── prepare_instructions.py    Smol-SmolTalk assistant-only SFT pipeline
-├── dataset.py                 Memory-mapped runtime dataset and shard sampler
-├── train.py                   BF16 DistributedDataParallel training
-├── notifications.py           Non-blocking Discord training updates
-├── checkpoint.py              Rolling snapshots and resumable checkpoints
-├── generate.py                Sampling, KV-cache generation, and response parsing
-├── inference.py               CPU-only interactive inspection
-├── check_setup.py             Tokenizer, model, and source-access validation
-└── tests/                     Focused correctness tests
-```
-
-See `DESIGN.md` for tensor shapes and implementation details, and `REFERENCES.md` for the research sources behind the design.
-
-## Installation
-
-A CUDA-enabled PyTorch build is required for training. Install the PyTorch build appropriate for the CUDA stack on the Arch Linux machine, then install the remaining dependencies:
+### 1. Install
 
 ```bash
 python -m venv .venv
@@ -58,125 +15,45 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-The code requires a PyTorch version with `scaled_dot_product_attention(..., enable_gqa=True)` support.
-
-## Hugging Face access
-
-Authenticate before preparing data:
+Authenticate with Hugging Face and accept access to `nvidia/Nemotron-CC-Math-v1`:
 
 ```bash
 hf auth login
 ```
 
-The NVIDIA mathematics source is gated. Accept its data-access terms on Hugging Face before running the setup check:
-
-- `nvidia/Nemotron-CC-Math-v1`
-
-The general-web source, `HuggingFaceFW/dclm_100BT-shuffled`, is public and does not require a separate access request.
-
-Dataset licenses and redistribution conditions remain the responsibility of the person running the training job. The preparation manifest records source names and tokenizer metadata, but raw source data is not redistributed by this project.
-
-## Validate the installation
-
-Run:
+### 2. Verify the project
 
 ```bash
 python check_setup.py
 pytest -q
+```
+
+Optional dual-GPU smoke test:
+
+```bash
 torchrun --nnodes=1 --nproc_per_node=2 --master_addr=127.0.0.1 --master_port=29671 --max_restarts=0 ddp_smoke.py
 ```
 
-`check_setup.py` downloads and pins the SmolLM2 tokenizer locally, constructs the full model on the meta device to verify its parameter count, and reads one record from every configured dataset source. It fails immediately if credentials, source names, configurations, or text fields are incorrect.
+### 3. Prepare the dataset
 
-Both `check_setup.py` and `prepare_data.py` use a deliberate successful hard exit after all work and output flushing have completed. This bypasses a PyArrow background-thread finalization crash seen on some Python 3.12 systems; real exceptions still propagate normally and return a non-zero exit status.
-
-The setup check does not shuffle source streams. SwallowCode is streamed directly from the official Stage 5 JSONL files under `stage5-auto-format/python/medium/`. Its loader parses only the `text` field and ignores every metadata column, avoiding schema conflicts between raw shards. DCLM 100BT is already globally shuffled, while the full preparation run applies a deterministic bounded shuffle to sources that are not pre-shuffled.
-
-## Base-pretraining mixture
-
-The default 13-billion-token target is defined in `config.py`:
-
-| Source | Tokens | Share |
-|---|---:|---:|
-| DCLM 100BT shuffled | 10.40B | 80% |
-| SwallowCode-v2 stage 5 | 1.56B | 12% |
-| Nemotron-CC-Math 4+ | 0.78B | 6% |
-| Cosmopedia v2 | 0.26B | 2% |
-
-Specialist sources are processed before general web text so cross-source exact deduplication keeps the specialist copy.
-
-## Prepare the base dataset
+Set the desired token budget in `PREPARE_CONFIG['max_total_tokens']` inside `config.py`, then run:
 
 ```bash
-python prepare_data.py
+HF_HUB_ETAG_TIMEOUT=120 HF_HUB_DOWNLOAD_TIMEOUT=120 PYTHONUNBUFFERED=1 python prepare_data.py
 ```
 
-The pipeline:
-
-1. Inspects and validates any existing token/segment shard pairs.
-2. Reconstructs missing manifests when the configured source targets are already complete.
-3. Resumes incomplete sources by appending new shards without overwriting valid data.
-4. Streams whole records from Hugging Face only when more source data is required.
-5. Preserves code, mathematical notation, line breaks, and punctuation.
-6. Applies cross-source exact document and repeated-paragraph deduplication.
-7. Makes a deterministic document-level train/validation split.
-8. Tokenizes with the SmolLM2 tokenizer and appends `<|endoftext|>` document boundaries.
-9. Packs documents into fixed 2,049-token stored records, yielding 2,048 inputs and shifted labels.
-10. Writes immutable `uint16` memory-mapped token and segment shards plus reproducibility manifests.
-
-Rerunning `python prepare_data.py` is safe. Completed sources are skipped, partial sources continue from their valid shard count using the existing deduplication database, and a run that reached the old manifest-writing failure is recovered without retokenizing the corpus. Stale `.writing` files are discarded, while malformed or mismatched finalized shard pairs stop with a clear error instead of being silently reused.
-
-Base-pretraining shards omit the redundant all-ones loss-mask file. At 13 billion tokens, token and segment files require roughly 52 GB before filesystem overhead and the deduplication database.
-
-The default validation fraction is 0.1%. For a pilot corpus, reduce `PREPARE_CONFIG['max_total_tokens']` to approximately 100 million or more. The per-source targets are scaled automatically.
-
-Prepared data is written to:
+Prepared shards are written to:
 
 ```text
 data/processed/train/
 data/processed/validation/
 ```
 
-## Train on both RTX 3090s
+Preparation is resumable. Existing valid shards are checked and reused, completed sources are skipped, and missing manifests are rebuilt automatically.
 
-```bash
-torchrun --standalone --nproc_per_node=2 train.py
-```
+### 4. Configure Discord monitoring
 
-Each GPU receives one DDP process. No GPU memory is reserved for inference.
-
-The default effective batch contains:
-
-```text
-4 sequences per GPU
-× 8 gradient-accumulation steps
-× 2 GPUs
-× 2,048 positions
-= 131,072 sequence positions per optimizer update
-```
-
-The actual token counter excludes document-boundary and masked targets.
-
-Training uses:
-
-- BF16 autocast
-- AdamW with β1 0.9 and β2 0.95
-- 2% linear warmup and cosine decay
-- Gradient clipping at 1.0
-- TF32 matrix multiplication where applicable
-- Shard-aware distributed shuffling
-- Exact resume positions inside a shuffled epoch
-
-If the initial microbatch does not fit, reduce `micro_batch_size` and increase `gradient_accumulation_steps` by the same factor. Enable gradient checkpointing only when needed; it saves memory by trading away throughput.
-
-### Packed-document attention
-
-Targets that cross document boundaries are always masked. `isolate_packed_documents` is disabled by default so PyTorch can use its optimized causal SDPA kernel. Setting it to `True` additionally blocks attention across packed documents, but the explicit block mask is slower and consumes more memory.
-
-
-## Discord training status
-
-Discord notifications are enabled by default and are sent only by DDP rank zero. Create a private webhook in the Discord channel you want to monitor, then store it in the project-root `.env` file:
+Create a private Discord webhook and store it in `.env`:
 
 ```bash
 cp .env.example .env
@@ -185,127 +62,104 @@ chmod 600 .env
 python notifications.py
 ```
 
-The `.env` file must contain `STATUS_WEBHOOK=<your webhook URL>`. It is ignored by Git, while `.env.example` is safe to commit because it contains no credential. A `STATUS_WEBHOOK` value exported by the shell takes precedence over the `.env` value.
-
-`python notifications.py` sends a test message and exits with status zero when Discord accepts it.
-
-During training, Discord receives colour-coded embeds:
-
-- A blue startup embed with the host, GPUs, parameter count, context length, effective batch, dataset size, and resume state
-- A purple progress embed approximately every ten minutes
-- Gold validation embeds and green new-best validation embeds
-- Green completion, orange safe-interruption, and red fatal-error embeds
-
-Progress embeds include a compact progress bar, optimizer step, tokens processed, current and smoothed training loss, latest validation loss, learning rate, throughput, elapsed time, estimated time remaining, latest inference snapshot, and rank-zero peak GPU memory.
-
-Notification work is deliberately kept out of the performance-critical path. Only rank zero copies already-available scalar values at the existing reporting intervals; embed formatting, JSON serialization, and the HTTP request all run on the notifier's background thread. No Discord code runs inside model forward, backward, optimizer, or DDP synchronization operations, and a slow or unavailable Discord server cannot pause or terminate training.
-
-The interval and webhook settings are in `DISCORD_CONFIG` inside `config.py`. Set `DISCORD_CONFIG['enabled']` to `False` to disable notifications.
-
-## Rolling snapshots and checkpoints
-
-Inference snapshots are saved approximately every 600 seconds after the current optimizer update. They contain BF16 model weights and lightweight metadata only.
+`.env` should contain:
 
 ```text
-weights/snapshots/pretrain/snapshot_00.pt
-...
-weights/snapshots/pretrain/snapshot_09.pt
+STATUS_WEBHOOK=https://discord.com/api/webhooks/...
 ```
 
-There are always at most ten snapshots. The oldest slot is atomically replaced, so inference never observes a partially written file. Each snapshot is roughly 317 MB for the default model.
+Discord receives a startup embed, progress updates roughly every ten minutes, validation results, completion, interruption, and fatal-error notifications.
 
-Full resumable checkpoints are separate:
+### 5. Train on both GPUs
 
-```text
-weights/checkpoints/pretrain/checkpoint_XXXXXXXXX.pt
+```bash
+CUDA_VISIBLE_DEVICES=0,1 PYTHONUNBUFFERED=1 torchrun --standalone --nproc_per_node=2 --max_restarts=0 train.py
 ```
 
-They include model, optimizer, scheduler, RNG states, global token count, epoch, and exact committed sample position. A keyboard interruption writes both a resumable checkpoint and an inference snapshot.
+Training uses native PyTorch DistributedDataParallel. Hugging Face Accelerate is not required.
 
-## Inspect the current model on CPU
+Press `Ctrl+C` once to stop safely. Restart the same command to resume from the newest full checkpoint.
 
-In another terminal:
+### 6. Inspect current weights
+
+Rolling inference snapshots are saved approximately every ten minutes, with the newest ten retained.
+
+Run CPU-only inference with:
 
 ```bash
 python inference.py
 ```
 
-The script uses 24 CPU threads and does not touch either GPU. Commands:
+Useful commands:
 
 ```text
-/reload      Load the newest completed snapshot
-/info        Show step, token count, validation loss, and save time
-/clear       Clear conversation history
-/direct      Select direct-answer mode
-/reason      Select reasoning mode
-/thinking    Toggle display of extracted thinking text
-/help        Show commands
-/exit        Exit
+/reload    Load the newest snapshot
+/info      Show checkpoint information
+/direct    Direct-answer mode
+/reason    Reasoning mode
+/clear     Clear conversation history
+/exit      Exit
 ```
 
-The tokenizer keeps raw-document `<|endoftext|>` boundaries separate from the chat `<|im_end|>` token. The model must learn the control-token formats during post-training before reasoning mode becomes meaningful. The generation code enforces a configurable thinking-token budget to prevent an endless reasoning loop.
+## Model architecture
+
+| Component | Value |
+|---|---:|
+| Parameters | 158.6M |
+| Decoder layers | 30 |
+| Hidden dimension | 576 |
+| Query / KV heads | 9 / 3 |
+| Head dimension | 64 |
+| Feed-forward | SwiGLU, width 2,000 |
+| Normalization | Pre-RMSNorm and QK-RMSNorm |
+| Position encoding | RoPE |
+| Context length | 2,048 |
+| Attention | Causal grouped-query attention |
+| Output | Tied embeddings with full cross-entropy |
+
+Training uses BF16, AdamW, warmup plus cosine decay, gradient accumulation, gradient clipping, shard-aware distributed sampling, rolling inference snapshots, and resumable checkpoints.
+
+## Pretraining data
+
+The configured mixture is:
+
+| Source | Share |
+|---|---:|
+| DCLM 100BT shuffled | 80% |
+| SwallowCode-v2 | 12% |
+| Nemotron-CC-Math 4+ | 6% |
+| Cosmopedia v2 | 2% |
+
+Documents are deduplicated, split deterministically into training and validation sets, tokenized with the SmolLM2 tokenizer, separated with document-end tokens, and packed into 2,048-token sequences.
 
 ## Instruction tuning
 
-Prepare Smol-SmolTalk separately:
+Prepare Smol-SmolTalk with:
 
 ```bash
 python prepare_instructions.py
 ```
 
-This writes the same shard format under:
+Update the instruction-run paths and initial pretraining weights in `config.py`, then launch the same `torchrun` training command.
+
+## Key files
 
 ```text
-data/processed/instructions/train/
-data/processed/instructions/validation/
+model.py                 Transformer architecture
+train.py                 Dual-GPU training loop
+prepare_data.py          Base-data preparation
+prepare_instructions.py  Instruction-data preparation
+dataset.py               Memory-mapped dataset loader
+notifications.py         Discord embeds
+checkpoint.py            Snapshots and resumable checkpoints
+inference.py             CPU-only model inspection
+config.py                Project configuration
 ```
 
-Only assistant tokens contribute to the loss. User, system, and formatting prefixes are masked.
+See `DESIGN.md` for implementation details and `REFERENCES.md` for the research behind the architecture and dataset choices.
 
-To start an instruction run, edit the following settings in `config.py`:
+## Notes
 
-```python
-TRAIN_CONFIG['run_name'] = 'instructions'
-TRAIN_CONFIG['train_data_path'] = INSTRUCTION_CONFIG['output_path'] / 'train'
-TRAIN_CONFIG['validation_data_path'] = INSTRUCTION_CONFIG['output_path'] / 'validation'
-TRAIN_CONFIG['initial_weights'] = SNAPSHOT_PATH / 'pretrain' / 'snapshot_XX.pt'
-TRAIN_CONFIG['max_train_tokens'] = YOUR_ASSISTANT_TOKEN_BUDGET
-TRAIN_CONFIG['resume_training'] = True
-```
-
-Then launch the same command:
-
-```bash
-torchrun --standalone --nproc_per_node=2 train.py
-```
-
-Set `INFERENCE_CONFIG['snapshot_run']` to `instructions` to inspect the instruction-tuned snapshots.
-
-Smol-SmolTalk examples are treated as direct-answer supervision. The code supports `<|think|>` and `<|final|>` blocks, but no unverified chain-of-thought corpus is silently mixed into SFT. A future reasoning dataset should contain concise, validated traces and can use the same assistant-token loss mask.
-
-## Tests
-
-The included tests cover:
-
-- Forward and backward passes
-- Causal attention
-- Grouped-query KV caching
-- Cached versus full-sequence logits
-- RoPE-compatible generation positions
-- Packed-document isolation
-- Assistant-only loss masking
-- Boundary-target masking
-- Shard rotation and mmap loading
-- Distributed sampler partitioning and resume offsets
-- Rolling ten-file snapshot replacement
-- Atomic snapshot round trips
-- Sampling filters and response extraction
-
-These tests validate implementation behaviour, not final language quality. Model quality still depends on completing pretraining and post-training with suitable data and hyperparameters.
-
-## Practical limitations
-
-- The full 13B-token run was not executed as part of packaging.
-- Dataset repositories can change; run `check_setup.py` before committing storage and compute.
-- NVIDIA dataset access terms must be reviewed directly.
-- A 159M model can become useful for constrained tasks, but it will not match modern multi-billion-parameter assistants across broad knowledge and reasoning.
+- The final model quality depends heavily on the training-token budget and later instruction tuning.
+- A 158.6M model is useful as a compact research system, but it will not match modern multi-billion-parameter assistants.
+- Dataset licenses and access terms remain the responsibility of the person running the training job.

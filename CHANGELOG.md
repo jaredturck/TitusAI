@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.7
+
+- Fix manifest generation to use the actual `SequencePacker` statistics and shared manifest writer.
+- Validate and recover existing shard pairs before preprocessing, rebuilding missing manifests without retokenizing completed data.
+- Resume incomplete sources by appending new shards while preserving the existing deduplication state.
+
 ## 1.0.6
 
 - Replace the custom Discord webhook text file with project-root `.env` loading through `python-dotenv`.

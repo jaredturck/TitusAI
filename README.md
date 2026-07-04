@@ -113,14 +113,18 @@ python prepare_data.py
 
 The pipeline:
 
-1. Streams whole records from Hugging Face.
-2. Preserves code, mathematical notation, line breaks, and punctuation.
-3. Applies cross-source exact document and repeated-paragraph deduplication.
-4. Makes a deterministic document-level train/validation split.
-5. Tokenizes with the SmolLM2 tokenizer and appends `<|endoftext|>` document boundaries.
-6. Packs documents into fixed 2,049-token stored records, yielding 2,048 inputs and shifted labels.
-7. Writes immutable `uint16` memory-mapped token and segment shards.
-8. Writes a reproducibility manifest.
+1. Inspects and validates any existing token/segment shard pairs.
+2. Reconstructs missing manifests when the configured source targets are already complete.
+3. Resumes incomplete sources by appending new shards without overwriting valid data.
+4. Streams whole records from Hugging Face only when more source data is required.
+5. Preserves code, mathematical notation, line breaks, and punctuation.
+6. Applies cross-source exact document and repeated-paragraph deduplication.
+7. Makes a deterministic document-level train/validation split.
+8. Tokenizes with the SmolLM2 tokenizer and appends `<|endoftext|>` document boundaries.
+9. Packs documents into fixed 2,049-token stored records, yielding 2,048 inputs and shifted labels.
+10. Writes immutable `uint16` memory-mapped token and segment shards plus reproducibility manifests.
+
+Rerunning `python prepare_data.py` is safe. Completed sources are skipped, partial sources continue from their valid shard count using the existing deduplication database, and a run that reached the old manifest-writing failure is recovered without retokenizing the corpus. Stale `.writing` files are discarded, while malformed or mismatched finalized shard pairs stop with a clear error instead of being silently reused.
 
 Base-pretraining shards omit the redundant all-ones loss-mask file. At 13 billion tokens, token and segment files require roughly 52 GB before filesystem overhead and the deduplication database.
 

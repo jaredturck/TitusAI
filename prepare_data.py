@@ -20,6 +20,8 @@ from data_utils import (
     deterministic_split,
     extract_first,
     normalize_document,
+    recover_source_shards,
+    remove_stale_writing_files,
     write_manifest,
 )
 from tokenizer import (
@@ -110,6 +112,27 @@ def clear_prepared_directory(output_path):
             path.unlink()
 
 
+def prepare_output_directory(output_path):
+    output_path = Path(output_path)
+    output_path.mkdir(parents=True, exist_ok=True)
+    removed = remove_stale_writing_files(output_path)
+    manifest_path = output_path / 'manifest.json'
+
+    if manifest_path.exists():
+        manifest_path.unlink()
+
+    return removed
+
+
+def reset_deduplication_database():
+    database_path = Path(PREPARE_CONFIG['deduplication_database'])
+
+    for suffix in ['', '-shm', '-wal']:
+        path = Path(f'{database_path}{suffix}')
+        if path.exists():
+            path.unlink()
+
+
 def load_source_stream(source, shuffle=True):
     from datasets import load_dataset
 
@@ -154,7 +177,61 @@ def source_token_target(source, target_scale):
     return max(1, int(source['target_tokens'] * target_scale))
 
 
-def create_packers(source_name):
+def split_statistics_from_shards(shards):
+    num_sequences = sum(shard['num_sequences'] for shard in shards)
+    output_tokens = num_sequences * PREPARE_CONFIG['sequence_length']
+
+    return {
+        'documents': 0,
+        'input_tokens': output_tokens,
+        'output_tokens': output_tokens,
+        'discarded_tokens': 0,
+        'num_sequences': num_sequences,
+        'shards': shards,
+    }
+
+
+def recover_source_statistics(source, target_scale):
+    source_name = source['name']
+    sequence_length = PREPARE_CONFIG['sequence_length']
+    train_shards = recover_source_shards(
+        TRAIN_DATA_PATH,
+        source_name,
+        sequence_length,
+        store_loss_mask=False,
+    )
+    validation_shards = recover_source_shards(
+        VALIDATION_DATA_PATH,
+        source_name,
+        sequence_length,
+        store_loss_mask=False,
+    )
+    train_statistics = split_statistics_from_shards(train_shards)
+    validation_statistics = split_statistics_from_shards(validation_shards)
+    processed_tokens = (
+        train_statistics['output_tokens']
+        + validation_statistics['output_tokens']
+    )
+
+    return {
+        'name': source_name,
+        'target_tokens': source_token_target(source, target_scale),
+        'processed_tokens': processed_tokens,
+        'accepted_documents': 0,
+        'rejected_documents': 0,
+        'resumed': processed_tokens > 0,
+        'train': train_statistics,
+        'validation': validation_statistics,
+    }
+
+
+def source_is_complete(statistics):
+    tolerance = PREPARE_CONFIG['sequence_length'] * 2
+    minimum_tokens = max(0, statistics['target_tokens'] - tolerance)
+    return statistics['processed_tokens'] >= minimum_tokens
+
+
+def create_packers(source_name, existing_statistics):
     sequence_length = PREPARE_CONFIG['sequence_length']
     sequences_per_shard = PREPARE_CONFIG['sequences_per_shard']
 
@@ -164,6 +241,7 @@ def create_packers(source_name):
         sequence_length,
         sequences_per_shard,
         store_loss_mask=False,
+        existing_shards=existing_statistics['train']['shards'],
     )
     validation_writer = ShardWriter(
         VALIDATION_DATA_PATH,
@@ -171,6 +249,7 @@ def create_packers(source_name):
         sequence_length,
         sequences_per_shard,
         store_loss_mask=False,
+        existing_shards=existing_statistics['validation']['shards'],
     )
 
     return {
@@ -179,18 +258,32 @@ def create_packers(source_name):
     }
 
 
-def prepare_source(source, tokenizer, deduplicator, target_scale):
+def finalize_split_statistics(statistics):
+    statistics['num_sequences'] = sum(
+        shard['num_sequences']
+        for shard in statistics['shards']
+    )
+    statistics['output_tokens'] = (
+        statistics['num_sequences']
+        * PREPARE_CONFIG['sequence_length']
+    )
+    return statistics
+
+
+def prepare_source(source, tokenizer, deduplicator, target_scale, existing_statistics):
     source_name = source['name']
     target_tokens = source_token_target(source, target_scale)
-    packers = create_packers(source_name)
+    packers = create_packers(source_name, existing_statistics)
     dataset = load_source_stream(source)
-    processed_tokens = 0
+    processed_tokens = existing_statistics['processed_tokens']
     accepted_documents = 0
     rejected_documents = 0
     started = time.monotonic()
     last_report = started
 
-    print(f'[+] Preparing {source_name} to {target_tokens:,} tokens')
+    print(
+        f'[+] Resuming {source_name} at {processed_tokens:,}/{target_tokens:,} tokens'
+    )
 
     for record in dataset:
         raw_text = extract_first(record, source['text_fields'])
@@ -239,78 +332,112 @@ def prepare_source(source, tokenizer, deduplicator, target_scale):
         now = time.monotonic()
         if now - last_report >= 10:
             elapsed = now - started
-            tokens_per_second = int(processed_tokens / max(elapsed, 1))
+            new_tokens = processed_tokens - existing_statistics['processed_tokens']
+            tokens_per_second = int(new_tokens / max(elapsed, 1))
             print(
                 f'[+] {source_name}: {processed_tokens:,}/{target_tokens:,} tokens, '
-                f'{accepted_documents:,} documents, {tokens_per_second:,} tokens/s'
+                f'{accepted_documents:,} new documents, {tokens_per_second:,} tokens/s'
             )
             last_report = now
 
         if processed_tokens >= target_tokens:
             break
 
-    train_statistics = packers['train'].close()
-    validation_statistics = packers['validation'].close()
+    train_statistics = finalize_split_statistics(packers['train'].close())
+    validation_statistics = finalize_split_statistics(packers['validation'].close())
+    recovered_documents = (
+        existing_statistics['accepted_documents']
+        if existing_statistics['accepted_documents'] is not None
+        else 0
+    )
 
     return {
         'name': source_name,
         'target_tokens': target_tokens,
-        'processed_tokens': processed_tokens,
-        'accepted_documents': accepted_documents,
+        'processed_tokens': (
+            train_statistics['output_tokens']
+            + validation_statistics['output_tokens']
+        ),
+        'accepted_documents': recovered_documents + accepted_documents,
         'rejected_documents': rejected_documents,
+        'resumed': existing_statistics['processed_tokens'] > 0,
         'train': train_statistics,
         'validation': validation_statistics,
     }
 
 
-def build_manifest(split, source_statistics, tokenizer_metadata):
+def manifest_source_statistics(source_statistics, split):
     sources = []
-    total_sequences = 0
-    total_tokens = 0
 
     for source in source_statistics:
         split_statistics = source[split]
-        total_sequences += split_statistics['sequences']
-        total_tokens += split_statistics['tokens']
         sources.append({
             'name': source['name'],
             'target_tokens': source['target_tokens'],
             'processed_tokens': source['processed_tokens'],
             'accepted_documents': source['accepted_documents'],
             'rejected_documents': source['rejected_documents'],
-            'sequences': split_statistics['sequences'],
-            'tokens': split_statistics['tokens'],
-            'shards': split_statistics['shards'],
+            'resumed': source['resumed'],
+            'num_sequences': split_statistics['num_sequences'],
+            'output_tokens': split_statistics['output_tokens'],
         })
 
-    return {
-        'format_version': 1,
-        'split': split,
+    return sources
+
+
+def write_dataset_manifests(source_statistics, tokenizer_metadata):
+    train_shards = []
+    validation_shards = []
+
+    for source in source_statistics:
+        train_shards.extend(source['train']['shards'])
+        validation_shards.extend(source['validation']['shards'])
+
+    train_manifest = write_manifest(
+        TRAIN_DATA_PATH,
+        tokenizer_metadata,
+        PREPARE_CONFIG['sequence_length'],
+        manifest_source_statistics(source_statistics, 'train'),
+        train_shards,
+    )
+    validation_manifest = write_manifest(
+        VALIDATION_DATA_PATH,
+        tokenizer_metadata,
+        PREPARE_CONFIG['sequence_length'],
+        manifest_source_statistics(source_statistics, 'validation'),
+        validation_shards,
+    )
+
+    return train_manifest, validation_manifest
+
+
+def write_preparation_state(source_statistics):
+    state_path = TRAIN_DATA_PATH.parent / 'preparation_state.json'
+    state = {
         'sequence_length': PREPARE_CONFIG['sequence_length'],
-        'token_dtype': 'uint16',
-        'segment_dtype': 'uint16',
-        'has_loss_mask': False,
-        'total_sequences': total_sequences,
-        'total_tokens': total_tokens,
-        'tokenizer': tokenizer_metadata,
-        'sources': sources,
-        'preparation': {
-            'minimum_document_characters': PREPARE_CONFIG['minimum_document_characters'],
-            'maximum_document_characters': PREPARE_CONFIG['maximum_document_characters'],
-            'validation_fraction': PREPARE_CONFIG['validation_fraction'],
-            'exact_deduplication': PREPARE_CONFIG['exact_deduplication'],
-            'paragraph_deduplication': PREPARE_CONFIG['paragraph_deduplication'],
-            'random_seed': PREPARE_CONFIG['random_seed'],
-        },
+        'max_total_tokens': PREPARE_CONFIG['max_total_tokens'],
+        'sources': [
+            {
+                'name': source['name'],
+                'target_tokens': source['target_tokens'],
+                'processed_tokens': source['processed_tokens'],
+                'complete': source_is_complete(source),
+            }
+            for source in source_statistics
+        ],
     }
+    temporary_path = Path(f'{state_path}.writing')
+    temporary_path.write_text(json.dumps(state, indent=2), encoding='utf-8')
+    os.replace(temporary_path, state_path)
 
 
 def main():
     os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')
-    TRAIN_DATA_PATH.mkdir(parents=True, exist_ok=True)
-    VALIDATION_DATA_PATH.mkdir(parents=True, exist_ok=True)
-    clear_prepared_directory(TRAIN_DATA_PATH)
-    clear_prepared_directory(VALIDATION_DATA_PATH)
+    removed_train = prepare_output_directory(TRAIN_DATA_PATH)
+    removed_validation = prepare_output_directory(VALIDATION_DATA_PATH)
+
+    for filename in removed_train + removed_validation:
+        print(f'[+] Removed incomplete temporary file: {filename}')
 
     tokenizer = load_tokenizer()
     save_tokenizer(tokenizer)
@@ -318,6 +445,59 @@ def main():
 
     requested_tokens = sum(source['target_tokens'] for source in DATA_SOURCES)
     target_scale = min(1.0, PREPARE_CONFIG['max_total_tokens'] / requested_tokens)
+    recovered_statistics = [
+        recover_source_statistics(source, target_scale)
+        for source in DATA_SOURCES
+    ]
+    has_existing_data = any(
+        source['processed_tokens'] > 0
+        for source in recovered_statistics
+    )
+    incomplete_sources = [
+        source
+        for source in recovered_statistics
+        if not source_is_complete(source)
+    ]
+
+    if has_existing_data:
+        recovered_tokens = sum(
+            source['processed_tokens']
+            for source in recovered_statistics
+        )
+        print(
+            f'[+] Found {recovered_tokens:,} existing prepared tokens; '
+            'validating and resuming instead of starting over'
+        )
+    else:
+        reset_deduplication_database()
+        print('[+] No existing prepared data found; starting a fresh run')
+
+    if has_existing_data and incomplete_sources:
+        database_path = Path(PREPARE_CONFIG['deduplication_database'])
+        if not database_path.exists():
+            raise RuntimeError(
+                'Prepared shards exist but the deduplication database is missing. '
+                'Cannot safely resume a partial run without duplicating documents.'
+            )
+
+    if not incomplete_sources:
+        train_manifest, validation_manifest = write_dataset_manifests(
+            recovered_statistics,
+            tokenizer_metadata,
+        )
+        write_preparation_state(recovered_statistics)
+        train_tokens = train_manifest['num_sequences'] * PREPARE_CONFIG['sequence_length']
+        validation_tokens = (
+            validation_manifest['num_sequences']
+            * PREPARE_CONFIG['sequence_length']
+        )
+        print('[+] Existing shards already satisfy every source target')
+        print(
+            f'[+] Recovered {train_tokens:,} training tokens and '
+            f'{validation_tokens:,} validation tokens'
+        )
+        return
+
     deduplicator = DeduplicationStore(
         PREPARE_CONFIG['deduplication_database'],
         PREPARE_CONFIG['paragraph_minimum_characters'],
@@ -325,33 +505,52 @@ def main():
     source_statistics = []
 
     try:
-        for source in DATA_SOURCES:
-            statistics = prepare_source(
-                source,
-                tokenizer,
-                deduplicator,
-                target_scale,
-            )
+        for source, existing_statistics in zip(DATA_SOURCES, recovered_statistics):
+            if source_is_complete(existing_statistics):
+                print(
+                    f'[+] {source["name"]} already complete at '
+                    f'{existing_statistics["processed_tokens"]:,} tokens; skipping'
+                )
+                statistics = existing_statistics
+            else:
+                statistics = prepare_source(
+                    source,
+                    tokenizer,
+                    deduplicator,
+                    target_scale,
+                    existing_statistics,
+                )
+
             source_statistics.append(statistics)
+            write_preparation_state(source_statistics)
     finally:
         deduplicator.close()
 
-    train_manifest = build_manifest(
-        'train',
+    missing_sources = [
+        source['name']
+        for source in source_statistics
+        if not source_is_complete(source)
+    ]
+    if missing_sources:
+        raise RuntimeError(
+            'Dataset stream ended before these targets were reached: '
+            + ', '.join(missing_sources)
+        )
+
+    train_manifest, validation_manifest = write_dataset_manifests(
         source_statistics,
         tokenizer_metadata,
     )
-    validation_manifest = build_manifest(
-        'validation',
-        source_statistics,
-        tokenizer_metadata,
+    write_preparation_state(source_statistics)
+    train_tokens = train_manifest['num_sequences'] * PREPARE_CONFIG['sequence_length']
+    validation_tokens = (
+        validation_manifest['num_sequences']
+        * PREPARE_CONFIG['sequence_length']
     )
-    write_manifest(TRAIN_DATA_PATH / 'manifest.json', train_manifest)
-    write_manifest(VALIDATION_DATA_PATH / 'manifest.json', validation_manifest)
 
     print(
-        f'[+] Prepared {train_manifest["total_tokens"]:,} training tokens and '
-        f'{validation_manifest["total_tokens"]:,} validation tokens'
+        f'[+] Prepared {train_tokens:,} training tokens and '
+        f'{validation_tokens:,} validation tokens'
     )
 
 

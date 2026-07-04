@@ -78,7 +78,7 @@ PREPARE_CONFIG = {
     'deduplication_database': DATA_PATH / 'deduplication.sqlite3',
     'shuffle_buffer_size': 10_000,
     'random_seed': 1337,
-    'max_total_tokens': 13_000_000_000,
+    'max_total_tokens': 500_000_000,
 }
 
 DATA_SOURCES = [

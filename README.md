@@ -163,3 +163,44 @@ See `DESIGN.md` for implementation details and `REFERENCES.md` for the research 
 - The final model quality depends heavily on the training-token budget and later instruction tuning.
 - A 158.6M model is useful as a compact research system, but it will not match modern multi-billion-parameter assistants.
 - Dataset licenses and access terms remain the responsibility of the person running the training job.
+
+## Jared-PC GPU training setup
+
+These commands are specific to the dual RTX 3090 setup on Jared-PC. They set both cards to a temporary 300 W power limit, force all four reported GPU fans to 100% under the current Wayland session, and start training.
+
+Run from the TitusAI project directory with the virtual environment active:
+
+```bash
+sudo nvidia-smi -i 0 -pl 300
+sudo nvidia-smi -i 1 -pl 300
+
+sudo --preserve-env=DISPLAY,WAYLAND_DISPLAY,XDG_RUNTIME_DIR,DBUS_SESSION_BUS_ADDRESS \
+    nvidia-settings -c wayland-0 \
+    -a '[gpu:0]/GPUFanControlState=1' \
+    -a '[gpu:1]/GPUFanControlState=1' \
+    -a '[fan:0]/GPUTargetFanSpeed=100' \
+    -a '[fan:1]/GPUTargetFanSpeed=100' \
+    -a '[fan:2]/GPUTargetFanSpeed=100' \
+    -a '[fan:3]/GPUTargetFanSpeed=100'
+
+CUDA_VISIBLE_DEVICES=0,1 PYTHONUNBUFFERED=1 torchrun --standalone --nproc_per_node=2 --max_restarts=0 train.py
+```
+
+The power limits and manual fan settings are runtime changes, not firmware changes. They normally reset after a reboot or NVIDIA driver/session restart.
+
+Return the fans to automatic control without rebooting:
+
+```bash
+sudo --preserve-env=DISPLAY,WAYLAND_DISPLAY,XDG_RUNTIME_DIR,DBUS_SESSION_BUS_ADDRESS \
+    nvidia-settings -c wayland-0 \
+    -a '[gpu:0]/GPUFanControlState=0' \
+    -a '[gpu:1]/GPUFanControlState=0'
+```
+
+Return both cards to the stock 350 W power limit:
+
+```bash
+sudo nvidia-smi -i 0 -pl 350
+sudo nvidia-smi -i 1 -pl 350
+```
+

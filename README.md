@@ -143,6 +143,13 @@ sudo --preserve-env=DISPLAY,WAYLAND_DISPLAY,XDG_RUNTIME_DIR,DBUS_SESSION_BUS_ADD
     -a '[fan:2]/GPUTargetFanSpeed=100' \
     -a '[fan:3]/GPUTargetFanSpeed=100'
 ```
+Set fan speed back to auto
+```bash
+sudo --preserve-env=DISPLAY,WAYLAND_DISPLAY,XDG_RUNTIME_DIR,DBUS_SESSION_BUS_ADDRESS \
+    nvidia-settings -c wayland-0 \
+    -a '[gpu:0]/GPUFanControlState=0' \
+    -a '[gpu:1]/GPUFanControlState=0'
+```
 
 Start training:
 

@@ -1,12 +1,10 @@
 # TitusAI
 
-TitusAI is a readable, from-scratch PyTorch language model for studying a modern compact LLM end to end.
+TitusAI is a readable, from-scratch PyTorch language model for studying a compact modern LLM from data preparation through pretraining, instruction tuning, and inference.
 
-The model, training loop, data pipeline, checkpointing, Discord monitoring, generation, and CPU inference are implemented in this repository. Hugging Face is used only for the tokenizer and source datasets.
+## Training workflow
 
-## Complete workflow
-
-Run these stages in order.
+Run these stages in order from the project root.
 
 ### 1. Install
 
@@ -18,26 +16,17 @@ pip install -r requirements.txt
 hf auth login
 ```
 
-Accept access to `nvidia/Nemotron-CC-Math-v1` on Hugging Face before preparing data.
+Accept access to `nvidia/Nemotron-CC-Math-v1` on Hugging Face before preparing pretraining data.
 
-### 2. Configure Discord
-
-Create a private Discord webhook, then run:
+### 2. Configure Discord notifications
 
 ```bash
-cp .env.example .env
 nano .env
 chmod 600 .env
 python notifications.py
 ```
 
-`.env` should contain:
-
-```text
-STATUS_WEBHOOK=https://discord.com/api/webhooks/...
-```
-
-During training, Discord reports startup, loss, TPS, validation, snapshots, progress, ETA, and separate temperature, fan, clock, power, utilization, and thermal-throttling information for GPU 0 and GPU 1.
+Set `STATUS_WEBHOOK` in `.env`. Training confirms the startup notification before entering the training loop, then sends progress every 10 minutes.
 
 ### 3. Verify the project
 
@@ -46,7 +35,7 @@ python check_setup.py
 pytest -q
 ```
 
-Optional dual-GPU smoke test:
+The optional dual-GPU smoke test is:
 
 ```bash
 torchrun --nnodes=1 --nproc_per_node=2 --master_addr=127.0.0.1 --master_port=29671 --max_restarts=0 ddp_smoke.py
@@ -54,121 +43,55 @@ torchrun --nnodes=1 --nproc_per_node=2 --master_addr=127.0.0.1 --master_port=296
 
 ### 4. Prepare pretraining data
 
-Set the desired budget in `PREPARE_CONFIG['max_total_tokens']` inside `config.py`, then run:
-
 ```bash
 HF_HUB_ETAG_TIMEOUT=120 HF_HUB_DOWNLOAD_TIMEOUT=120 PYTHONUNBUFFERED=1 python prepare_data.py
 ```
 
-Data is written to:
+The token budget is set in `PREPARE_CONFIG` inside `config.py`. Prepared shards are written under `data/processed/train/` and `data/processed/validation/`.
 
-```text
-data/processed/train/
-data/processed/validation/
-```
-
-Preparation is resumable. Existing valid shards are checked and reused, incomplete sources continue from their saved progress, and missing manifests are rebuilt automatically.
-
-### 5. Pretrain
-
-Confirm `TRAIN_CONFIG` in `config.py` is configured for pretraining:
-
-```python
-'run_name': 'pretrain',
-'train_data_path': TRAIN_DATA_PATH,
-'validation_data_path': VALIDATION_DATA_PATH,
-'initial_weights': None,
-```
-
-Set `TRAIN_CONFIG['max_train_tokens']` to the desired training budget, then start both GPUs:
+### 5. Run pretraining
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1 PYTHONUNBUFFERED=1 torchrun --standalone --nproc_per_node=2 --max_restarts=0 train.py
+CUDA_VISIBLE_DEVICES=0,1 PYTHONUNBUFFERED=1 torchrun --standalone --nproc_per_node=2 --max_restarts=0 train.py pretrain
 ```
 
-Press `Ctrl+C` once to save safely. Run the same command again to resume from the newest full checkpoint.
+The training mode is mandatory. Press `Ctrl+C` once to save safely, then run the same command to resume from the newest pretraining checkpoint.
 
-### 6. Inspect pretraining snapshots
+### 6. Inspect the pretrained model
 
 ```bash
 python inference.py
 ```
 
-Useful commands:
-
-```text
-/reload    Load the newest snapshot
-/info      Show snapshot information
-/direct    Direct-answer format
-/reason    Reasoning format
-/clear     Clear conversation history
-/exit      Exit
-```
-
-A base-pretrained model is primarily a next-token predictor. Coherent instruction following is taught in the next stage.
+Use `/reload` to load the newest snapshot and `/info` to inspect it.
 
 ### 7. Prepare instruction data
-
-After pretraining is complete:
 
 ```bash
 python prepare_instructions.py
 ```
 
-Instruction shards are written to:
+Progress is printed about every five seconds with processed conversations, percentage, speed, elapsed time, and ETA. Output is written under `data/processed/instructions/`.
 
-```text
-data/processed/instructions/train/
-data/processed/instructions/validation/
-```
+### 8. Run instruction training
 
-Only assistant tokens contribute to instruction-training loss.
-
-### 8. Configure instruction tuning
-
-The current code does not yet provide a `--run instructions` command. Before starting instruction tuning, change these values in `TRAIN_CONFIG` inside `config.py`:
-
-```python
-'run_name': 'instructions',
-'train_data_path': PROCESSED_DATA_PATH / 'instructions' / 'train',
-'validation_data_path': PROCESSED_DATA_PATH / 'instructions' / 'validation',
-'initial_weights': SNAPSHOT_PATH / 'pretrain' / 'snapshot_XX.pt',
-'max_train_tokens': YOUR_INSTRUCTION_TOKEN_BUDGET,
-'resume_training': True,
-```
-
-Replace `snapshot_XX.pt` with the chosen final pretraining snapshot.
-
-Instruction checkpoints and snapshots are stored separately under:
-
-```text
-weights/checkpoints/instructions/
-weights/snapshots/instructions/
-```
-
-### 9. Train the instruction model
-
-Use the same dual-GPU command:
+The instruction mode is hard-coded in `TRAIN_CONFIGS['instruction']` inside `config.py` and currently starts from `weights/snapshots/pretrain/snapshot_07.pt`.
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1 PYTHONUNBUFFERED=1 torchrun --standalone --nproc_per_node=2 --max_restarts=0 train.py
+CUDA_VISIBLE_DEVICES=0,1 PYTHONUNBUFFERED=1 torchrun --standalone --nproc_per_node=2 --max_restarts=0 train.py instruction
 ```
 
-### 10. Inspect the instruction-tuned model
+Instruction checkpoints and snapshots are stored separately under `weights/checkpoints/instructions/` and `weights/snapshots/instructions/`.
 
-Set this in `INFERENCE_CONFIG` inside `config.py`:
+### 9. Inspect the instruction-tuned model
 
-```python
-'snapshot_run': 'instructions',
-```
-
-Then run:
+Set `INFERENCE_CONFIG['snapshot_run']` to `instructions` inside `config.py`, then run:
 
 ```bash
 python inference.py
 ```
 
-## Model
+## Technical summary
 
 | Component | Value |
 |---|---:|
@@ -176,39 +99,27 @@ python inference.py
 | Decoder layers | 30 |
 | Hidden dimension | 576 |
 | Query / KV heads | 9 / 3 |
-| Head dimension | 64 |
 | Feed-forward | SwiGLU, width 2,000 |
-| Normalization | Pre-RMSNorm and QK-RMSNorm |
-| Position encoding | RoPE |
 | Context length | 2,048 |
 | Attention | Causal grouped-query attention |
-| Output | Tied embeddings with full cross-entropy |
+| Position encoding | RoPE |
+| Normalization | Pre-RMSNorm and QK-RMSNorm |
 
-Training uses BF16, native PyTorch DistributedDataParallel, AdamW, warmup plus cosine decay, gradient accumulation, gradient clipping, resumable checkpoints, and rolling inference snapshots.
+Training uses BF16, PyTorch DistributedDataParallel, AdamW, gradient accumulation, resumable checkpoints, rolling inference snapshots, and assistant-only loss masking for instruction data.
 
-## Pretraining mixture
-
-| Source | Share |
-|---|---:|
-| DCLM 100BT shuffled | 80% |
-| SwallowCode-v2 | 12% |
-| Nemotron-CC-Math 4+ | 6% |
-| Cosmopedia v2 | 2% |
-
-Documents are deduplicated, split deterministically, tokenized with the SmolLM2 tokenizer, separated with document-end tokens, and packed into 2,048-token sequences.
+The pretraining mixture is 80% DCLM, 12% SwallowCode-v2, 6% Nemotron-CC-Math, and 2% Cosmopedia v2.
 
 ## Key files
 
 ```text
-config.py                Model, data, training, and inference settings
-model.py                 Transformer architecture
+config.py                Model, data, training-mode, and inference settings
 prepare_data.py          Resumable pretraining-data preparation
-prepare_instructions.py  Instruction-data preparation
-train.py                 Dual-GPU training
-notifications.py         Discord embeds and GPU telemetry
+prepare_instructions.py  Instruction-data preparation and progress reporting
+train.py                 Pretraining and instruction training
+notifications.py         Discord notifications and GPU telemetry
+model.py                 Transformer architecture
 checkpoint.py            Snapshots and resumable checkpoints
-inference.py             CPU-only model inspection
-tests/                   Correctness tests
+inference.py             CPU model inspection
 ```
 
 See `DESIGN.md` for implementation details and `REFERENCES.md` for research sources.
@@ -236,7 +147,7 @@ sudo --preserve-env=DISPLAY,WAYLAND_DISPLAY,XDG_RUNTIME_DIR,DBUS_SESSION_BUS_ADD
 Start training:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1 PYTHONUNBUFFERED=1 torchrun --standalone --nproc_per_node=2 --max_restarts=0 train.py
+CUDA_VISIBLE_DEVICES=0,1 PYTHONUNBUFFERED=1 torchrun --standalone --nproc_per_node=2 --max_restarts=0 train.py pretrain
 ```
 
 The power and fan settings normally reset after reboot or an NVIDIA driver/session restart.

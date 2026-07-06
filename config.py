@@ -37,10 +37,6 @@ MODEL_CONFIG = {
 }
 
 TRAIN_CONFIG = {
-    'run_name': 'pretrain',
-    'train_data_path': TRAIN_DATA_PATH,
-    'validation_data_path': VALIDATION_DATA_PATH,
-    'initial_weights': None,
     'seed': 1337,
     'micro_batch_size': 4,
     'gradient_accumulation_steps': 8,
@@ -62,8 +58,24 @@ TRAIN_CONFIG = {
     'pin_memory': True,
     'persistent_workers': True,
     'gradient_checkpointing': False,
-    'isolate_packed_documents': False,
     'resume_training': True,
+}
+
+TRAIN_CONFIGS = {
+    'pretrain': {
+        'run_name': 'pretrain',
+        'train_data_path': TRAIN_DATA_PATH,
+        'validation_data_path': VALIDATION_DATA_PATH,
+        'initial_weights': None,
+        'isolate_packed_documents': False,
+    },
+    'instruction': {
+        'run_name': 'instructions',
+        'train_data_path': PROCESSED_DATA_PATH / 'instructions' / 'train',
+        'validation_data_path': PROCESSED_DATA_PATH / 'instructions' / 'validation',
+        'initial_weights': SNAPSHOT_PATH / 'pretrain' / 'snapshot_07.pt',
+        'isolate_packed_documents': True,
+    },
 }
 
 PREPARE_CONFIG = {
@@ -146,6 +158,8 @@ INSTRUCTION_CONFIG = {
     'validation_fraction': 0.002,
     'maximum_conversation_tokens': MODEL_CONFIG['max_seq_len'] - 1,
     'output_path': PROCESSED_DATA_PATH / 'instructions',
+    'progress_interval_seconds': 5,
+    'progress_check_conversations': 1000,
 }
 
 

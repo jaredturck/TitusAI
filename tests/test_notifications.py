@@ -108,6 +108,25 @@ def test_missing_webhook_disables_notifier(monkeypatch, tmp_path):
     assert notifier.close()
 
 
+def test_discord_notifier_flushes_without_closing(monkeypatch):
+    requests = []
+
+    def fake_urlopen(request, timeout):
+        requests.append((request, timeout))
+        return FakeResponse()
+
+    monkeypatch.setattr(notifications, 'urlopen', fake_urlopen)
+    monkeypatch.setenv('STATUS_WEBHOOK', 'https://discord.com/api/webhooks/test/token')
+
+    notifier = DiscordNotifier(make_config())
+    notifier.send('Training starting', [('Run', 'pretrain')])
+
+    assert notifier.flush()
+    assert len(requests) == 1
+    assert notifier.worker.is_alive()
+    assert notifier.close()
+
+
 def test_notification_failure_does_not_raise(monkeypatch):
     def failed_urlopen(request, timeout):
         raise TimeoutError('timed out')

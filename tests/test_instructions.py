@@ -1,4 +1,7 @@
-from prepare_instructions import build_instruction_tokens
+from prepare_instructions import (
+    build_instruction_tokens,
+    format_instruction_progress,
+)
 
 
 class InstructionTokenizer:
@@ -39,3 +42,26 @@ def test_instruction_masks_only_assistant_tokens():
     ])
     assert sum(loss_mask) > 0
     assert loss_mask[-1] == 1
+
+
+def test_instruction_progress_includes_total_speed_and_eta():
+    progress = format_instruction_progress(
+        400_000,
+        500_000,
+        390_000,
+        10_000,
+        1000,
+    )
+
+    assert '400,000 / 500,000 conversations (80.00%)' in progress
+    assert 'accepted=390,000 rejected=10,000' in progress
+    assert '400.0 conversations/s' in progress
+    assert 'ETA=4m 10s' in progress
+
+
+def test_instruction_progress_works_without_dataset_total():
+    progress = format_instruction_progress(10_000, None, 9_000, 1_000, 100)
+
+    assert 'Processed 10,000 conversations' in progress
+    assert '%' not in progress
+    assert 'ETA=' not in progress

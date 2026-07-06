@@ -1,4 +1,5 @@
 import json
+import time
 from pathlib import Path
 
 from config import INSTRUCTION_CONFIG
@@ -26,6 +27,50 @@ def load_instruction_stream():
         arguments['name'] = INSTRUCTION_CONFIG['config']
 
     return load_dataset(**arguments)
+
+
+def instruction_total_conversations(dataset):
+    splits = dataset.info.splits
+    if splits is None:
+        return None
+
+    split = splits.get(INSTRUCTION_CONFIG['split'])
+    if split is None:
+        return None
+    return split.num_examples
+
+
+def format_duration(seconds):
+    seconds = max(0, int(seconds))
+    hours, seconds = divmod(seconds, 3_600)
+    minutes, seconds = divmod(seconds, 60)
+
+    if hours:
+        return f'{hours}h {minutes:02d}m {seconds:02d}s'
+    return f'{minutes}m {seconds:02d}s'
+
+
+def format_instruction_progress(processed, total, accepted, rejected, elapsed):
+    conversations_per_second = processed / elapsed if elapsed > 0 else 0
+    progress = f'[+] Processed {processed:,}'
+
+    if total is not None:
+        percentage = 100 * processed / total
+        progress += f' / {total:,} conversations ({percentage:.2f}%)'
+    else:
+        progress += ' conversations'
+
+    progress += (
+        f' | accepted={accepted:,} rejected={rejected:,}'
+        f' | {conversations_per_second:,.1f} conversations/s'
+        f' | elapsed={format_duration(elapsed)}'
+    )
+
+    if total is not None and conversations_per_second > 0:
+        remaining = max(0, total - processed)
+        progress += f' | ETA={format_duration(remaining / conversations_per_second)}'
+
+    return progress
 
 
 def encode_text(tokenizer, text):
@@ -108,10 +153,32 @@ def main():
     output_path = Path(INSTRUCTION_CONFIG['output_path'])
     packers = create_packers(output_path)
     dataset = load_instruction_stream()
+    total_conversations = instruction_total_conversations(dataset)
     accepted = 0
     rejected = 0
+    start_time = time.monotonic()
+    last_log_time = start_time
 
     for record in dataset:
+        processed = accepted + rejected
+        if (
+            processed > 0
+            and processed % INSTRUCTION_CONFIG['progress_check_conversations'] == 0
+        ):
+            current_time = time.monotonic()
+            if current_time - last_log_time >= INSTRUCTION_CONFIG['progress_interval_seconds']:
+                print(
+                    format_instruction_progress(
+                        processed,
+                        total_conversations,
+                        accepted,
+                        rejected,
+                        current_time - start_time,
+                    ),
+                    flush=True,
+                )
+                last_log_time = current_time
+
         messages = record.get(INSTRUCTION_CONFIG['messages_field'])
         if not isinstance(messages, list):
             rejected += 1
@@ -139,8 +206,17 @@ def main():
         packers[split].add_document(token_ids, loss_mask)
         accepted += 1
 
-        if accepted % 10_000 == 0:
-            print(f'[+] Prepared {accepted:,} conversations')
+    processed = accepted + rejected
+    print(
+        format_instruction_progress(
+            processed,
+            total_conversations,
+            accepted,
+            rejected,
+            time.monotonic() - start_time,
+        ),
+        flush=True,
+    )
 
     train_statistics = packers['train'].close()
     validation_statistics = packers['validation'].close()

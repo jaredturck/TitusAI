@@ -3,6 +3,7 @@ import math
 import os
 import random
 import socket
+import sys
 import time
 
 import numpy as np
@@ -24,10 +25,24 @@ from config import (
     MODEL_CONFIG,
     SNAPSHOT_PATH,
     TRAIN_CONFIG,
+    TRAIN_CONFIGS,
 )
 from dataset import ShardShuffleSampler, TitusDataset
 from model import TitusModel
 from notifications import DiscordNotifier
+
+
+def select_training_config(arguments=None):
+    arguments = sys.argv[1:] if arguments is None else arguments
+    if len(arguments) != 1 or arguments[0] not in TRAIN_CONFIGS:
+        if int(os.environ.get('RANK', '0')) == 0:
+            print('[!] Training stopped: provide pretrain or instruction')
+            print('    python train.py pretrain')
+            print('    python train.py instruction')
+        return False
+
+    TRAIN_CONFIG.update(TRAIN_CONFIGS[arguments[0]])
+    return True
 
 
 def format_duration(seconds):
@@ -434,7 +449,7 @@ def main():
         print(f'[+] Planned optimizer steps: {total_steps:,}')
 
         notifier.send(
-            '🚀 TitusAI training started',
+            '🚀 TitusAI training starting',
             [
                 ('Run', run_name),
                 ('Host', socket.gethostname()),
@@ -449,10 +464,15 @@ def main():
                 ('Target tokens', f'{TRAIN_CONFIG["max_train_tokens"]:,}'),
                 ('Checkpoint', resume_status, False),
             ],
-            description='Training is online and Discord monitoring is active.',
+            description='Training is starting and Discord monitoring is active.',
             color='blue',
             include_gpu_stats=True,
         )
+        if notifier.enabled:
+            if notifier.flush():
+                print('[+] Discord startup notification sent')
+            else:
+                print('[!] Discord startup notification failed')
 
     optimizer.zero_grad(set_to_none=True)
     training_start = time.monotonic()
@@ -799,4 +819,5 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    if select_training_config():
+        main()

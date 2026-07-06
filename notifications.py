@@ -322,6 +322,13 @@ class DiscordNotifier:
             self.last_error = str(error)
             print(f'[!] Discord notification failed: {error}')
 
+    def flush(self):
+        if not self.enabled or self.worker is None:
+            return False
+
+        self.messages.join()
+        return self.last_error is None and self.worker.is_alive()
+
     def close(self):
         if not self.enabled or self.worker is None:
             return self.last_error is None

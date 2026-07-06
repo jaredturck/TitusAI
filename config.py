@@ -49,7 +49,7 @@ TRAIN_CONFIG = {
     'warmup_ratio': 0.02,
     'weight_decay': 0.1,
     'gradient_clip': 1.0,
-    'max_train_tokens': 13_000_000_000,
+    'max_train_tokens': 500_000_000,
     'validation_interval_steps': 1000,
     'validation_batches': 200,
     'checkpoint_interval_steps': 5000,

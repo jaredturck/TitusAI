@@ -18,12 +18,8 @@ def token_id(tokenizer, token):
     return None
 
 
-def configured_snapshot_path():
-    return SNAPSHOT_PATH / INFERENCE_CONFIG['snapshot_run']
-
-
 def load_latest_model():
-    snapshot_path = find_latest_snapshot(configured_snapshot_path())
+    snapshot_path = find_latest_snapshot(SNAPSHOT_PATH)
     assert snapshot_path is not None, 'No inference snapshots were found'
 
     snapshot_data = torch.load(
@@ -40,7 +36,7 @@ def load_latest_model():
 
 
 def print_snapshot_info(snapshot, snapshot_path):
-    print(f'[+] Loaded: {snapshot_path.name}')
+    print(f'[+] Loaded: {snapshot_path.relative_to(SNAPSHOT_PATH)}')
     print(f'[+] Step: {snapshot.get("global_step", 0):,}')
     print(f'[+] Tokens seen: {snapshot.get("tokens_seen", 0):,}')
     print(f'[+] Validation loss: {snapshot.get("validation_loss")}')
@@ -120,7 +116,7 @@ def main():
             continue
 
         if user_text == '/reload':
-            newest_path = find_latest_snapshot(configured_snapshot_path())
+            newest_path = find_latest_snapshot(SNAPSHOT_PATH)
             if newest_path == snapshot_path:
                 print('[+] Already using the newest snapshot')
                 continue

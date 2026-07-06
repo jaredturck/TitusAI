@@ -85,7 +85,7 @@ Instruction checkpoints and snapshots are stored separately under `weights/check
 
 ### 9. Inspect the instruction-tuned model
 
-Set `INFERENCE_CONFIG['snapshot_run']` to `instructions_50m` inside `config.py`, then run:
+Inference automatically loads the most recently modified snapshot from any run under `weights/snapshots/`:
 
 ```bash
 python inference.py

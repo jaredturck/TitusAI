@@ -59,11 +59,11 @@ def save_inference_snapshot(model, model_config, tokenizer_metadata, snapshot_pa
 
 def find_latest_snapshot(snapshot_path):
     snapshot_path = Path(snapshot_path)
-    snapshots = list(snapshot_path.glob('snapshot_*.pt'))
+    snapshots = list(snapshot_path.rglob('snapshot_*.pt'))
     snapshots = [path for path in snapshots if not path.name.endswith('.writing')]
     if not snapshots:
         return None
-    return max(snapshots, key=lambda path: path.stat().st_mtime)
+    return max(snapshots, key=os.path.getmtime)
 
 
 def capture_rng_state():

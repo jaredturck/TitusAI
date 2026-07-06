@@ -11,3 +11,4 @@ weights/snapshots/*
 !weights/snapshots/.gitkeep
 tokenizer_files/
 logs/
+*.zip

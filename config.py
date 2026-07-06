@@ -186,7 +186,6 @@ GENERATION_CONFIG = {
 }
 
 INFERENCE_CONFIG = {
-    'snapshot_run': 'pretrain',
     'device': 'cpu',
     'threads': 24,
     'system_prompt': 'You are Titus, a helpful and concise assistant.',

@@ -1,3 +1,5 @@
+import os
+
 import torch
 
 from checkpoint import (
@@ -29,6 +31,19 @@ def test_snapshot_rotation(tmp_path, tiny_config):
     latest = find_latest_snapshot(tmp_path)
     data = torch.load(latest, map_location='cpu', weights_only=False)
     assert data['global_step'] == 11
+
+
+def test_find_latest_snapshot_recursively(tmp_path):
+    old_snapshot = tmp_path / 'pretrain' / 'snapshot_09.pt'
+    new_snapshot = tmp_path / 'instructions_50m' / 'snapshot_06.pt'
+    old_snapshot.parent.mkdir()
+    new_snapshot.parent.mkdir()
+    old_snapshot.touch()
+    new_snapshot.touch()
+    os.utime(old_snapshot, (100, 100))
+    os.utime(new_snapshot, (200, 200))
+
+    assert find_latest_snapshot(tmp_path) == new_snapshot
 
 
 def test_snapshot_round_trip(tmp_path, tiny_config):

@@ -673,27 +673,6 @@ def main():
                             f'[+] validation_loss={last_validation_loss:.4f} '
                             f'best={best_validation_loss:.4f}'
                         )
-                        notifier.send(
-                            '✅ New best validation loss' if validation_improved else '🧪 Validation complete',
-                            [
-                                ('Run', run_name),
-                                ('Optimizer step', f'{global_step:,}'),
-                                ('Validation loss', f'{last_validation_loss:.4f}'),
-                                ('Best validation loss', f'{best_validation_loss:.4f}'),
-                                ('Current train loss', 'Unavailable' if latest_loss is None else f'{latest_loss:.4f}'),
-                                ('Smoothed train loss', 'Unavailable' if smoothed_loss is None else f'{smoothed_loss:.4f}'),
-                                ('Tokens processed', f'{tokens_seen:,} / {TRAIN_CONFIG["max_train_tokens"]:,}', False),
-                            ],
-                            description=(
-                                'The model reached a new best validation score.'
-                                if validation_improved
-                                else training_status_description(
-                                    tokens_seen,
-                                    TRAIN_CONFIG['max_train_tokens'],
-                                )
-                            ),
-                            color='green' if validation_improved else 'gold',
-                        )
 
                 periodic_checkpoint = (
                     global_step % TRAIN_CONFIG['checkpoint_interval_steps'] == 0

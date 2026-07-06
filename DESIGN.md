@@ -103,3 +103,7 @@ The tokenizer adds:
 ```
 
 These tokens remain in the vocabulary for checkpoint compatibility. The conversational fine-tune and default inference path use plain newline-separated turns instead of role, mode, or reasoning prefixes.
+
+## Training notifications
+
+Rank zero sends a normal progress embed every five minutes. GPU temperature, fan speed, clock, power, utilization, power-cap state, and thermal-throttling state are reported as telemetry fields; routine thermal throttling does not change the embed title, description, or color. Validation still runs and controls best-checkpoint tracking, but it does not emit separate Discord messages.

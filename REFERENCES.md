@@ -35,8 +35,6 @@ The project deliberately uses a conservative modern dense decoder rather than co
   https://huggingface.co/datasets/HuggingFaceTB/smollm-corpus
 - SODA  
   https://huggingface.co/datasets/allenai/soda
-- Topical-Chat  
-  https://huggingface.co/datasets/Conversational-Reasoning/Topical-Chat
 - DailyDialog  
   https://huggingface.co/datasets/OpenRL/daily_dialog
 - SmolLM2-135M-Instruct tokenizer  

@@ -2,6 +2,7 @@ import json
 import threading
 
 import notifications
+from config import DISCORD_CONFIG
 from notifications import (
     DiscordNotifier,
     EMBED_COLORS,
@@ -33,9 +34,13 @@ def make_config():
     return {
         'enabled': True,
         'username': 'TitusAI Test',
-        'status_interval_seconds': 600,
+        'status_interval_seconds': 300,
         'request_timeout_seconds': 1,
     }
+
+
+def test_discord_progress_interval_is_five_minutes():
+    assert DISCORD_CONFIG['status_interval_seconds'] == 300
 
 
 def test_discord_notifier_posts_embed(monkeypatch):
@@ -347,10 +352,11 @@ def test_notifier_adds_both_gpu_stats_on_background_thread(monkeypatch):
     embed = payload['embeds'][0]
     fields = {field['name']: field['value'] for field in embed['fields']}
 
-    assert embed['color'] == EMBED_COLORS['orange']
-    assert 'thermal throttling' in embed['title'].lower()
-    assert 'GPU 1' in embed['description']
+    assert embed['color'] == EMBED_COLORS['purple']
+    assert embed['title'] == '📈 TitusAI training progress'
+    assert embed['description'] == 'Training normally.'
     assert fields['Tokens per second'] == '22,754 TPS'
     assert 'GPU 0 — RTX 3090' in fields
     assert 'GPU 1 — RTX 3090' in fields
+    assert 'THERMAL THROTTLING ACTIVE' in fields['GPU 1 — RTX 3090']
 

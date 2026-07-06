@@ -18,47 +18,19 @@ from tokenizer import document_end_token_id, get_tokenizer_metadata, load_tokeni
 WHITESPACE = re.compile(r'\s+')
 
 
-class JsonlConversationStream:
-    def __init__(self, source):
-        self.source = source
-
-    def __iter__(self):
-        from huggingface_hub import HfFileSystem
-
-        filesystem = HfFileSystem()
-        block_size = self.source.get('read_block_size', 8 * 1024 * 1024)
-
-        for data_file in self.source['data_files']:
-            filename = f'datasets/{self.source["dataset"]}/{data_file}'
-            with filesystem.open(filename, 'rb', block_size=block_size) as file:
-                for line_number, line in enumerate(file, start=1):
-                    if not line.strip():
-                        continue
-
-                    try:
-                        yield json.loads(line)
-                    except json.JSONDecodeError as error:
-                        raise RuntimeError(
-                            f'Invalid JSON in {filename} at line {line_number}'
-                        ) from error
-
-
 def load_instruction_stream(source, pass_index=0, shuffle=True):
-    if source.get('loader') == 'jsonl':
-        dataset = JsonlConversationStream(source)
-    else:
-        from datasets import load_dataset
+    from datasets import load_dataset
 
-        arguments = {
-            'path': source['dataset'],
-            'split': source['split'],
-            'streaming': True,
-        }
+    arguments = {
+        'path': source['dataset'],
+        'split': source['split'],
+        'streaming': True,
+    }
 
-        if source.get('config') is not None:
-            arguments['name'] = source['config']
+    if source.get('config') is not None:
+        arguments['name'] = source['config']
 
-        dataset = load_dataset(**arguments)
+    dataset = load_dataset(**arguments)
 
     if not shuffle:
         return dataset

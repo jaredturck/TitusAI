@@ -170,19 +170,8 @@ def gpu_telemetry_fields(gpus, error=None):
 
 def add_gpu_telemetry(event):
     gpus, error = collect_gpu_telemetry()
-    fields, throttled_gpus = gpu_telemetry_fields(gpus, error)
+    fields, _ = gpu_telemetry_fields(gpus, error)
     event['fields'] = list(event.get('fields') or []) + fields
-
-    if throttled_gpus:
-        gpu_list = ', '.join(f'GPU {index}' for index in throttled_gpus)
-        warning = f'⚠️ **Thermal throttling detected on {gpu_list}.**'
-        description = event.get('description')
-        event['description'] = (
-            f'{warning}\n\n{description}' if description else warning
-        )
-        event['title'] = f'⚠️ Thermal throttling — {event["title"]}'
-        event['color'] = 'orange'
-
     return event
 
 

@@ -26,7 +26,7 @@ chmod 600 .env
 python notifications.py
 ```
 
-Set `STATUS_WEBHOOK` in `.env`. Training confirms the startup notification before entering the training loop, then sends progress every 10 minutes.
+Set `STATUS_WEBHOOK` in `.env`. Training confirms the startup notification before entering the training loop, then sends progress every 5 minutes. GPU thermal-throttling state remains inside the relevant telemetry field without changing the progress embed title or color.
 
 ### 3. Verify the project
 
@@ -71,9 +71,9 @@ Use `/reload` to load the newest snapshot and `/info` to inspect it.
 python prepare_instructions.py
 ```
 
-This prepares a 50-million-token mixture of 80% SODA, 15% Topical-Chat, and 5% DailyDialog. Messages are joined with newlines, conversations end with the existing document-end token, and output is written under `data/processed/instructions/` without assistant-role prefixes or loss-mask files.
+This prepares a 50-million-token mixture of 90% SODA and 10% DailyDialog. Messages are joined with newlines, conversations end with the existing document-end token, and output is written under `data/processed/instructions/` without assistant-role prefixes or loss-mask files.
 
-Dataset licences are CC BY 4.0 for SODA, CDLA-Sharing 1.0 for Topical-Chat, and CC BY-NC-SA 4.0 for the upstream DailyDialog corpus. Review those terms before redistributing prepared data or using the resulting model commercially.
+Dataset licences are CC BY 4.0 for SODA and CC BY-NC-SA 4.0 for the upstream DailyDialog corpus. Review those terms before redistributing prepared data or using the resulting model commercially.
 
 ### 8. Run conversational fine-tuning
 
@@ -111,7 +111,7 @@ python inference.py
 
 Training uses BF16, PyTorch DistributedDataParallel, AdamW, gradient accumulation, resumable checkpoints, and rolling inference snapshots. Conversational fine-tuning uses the same optimized causal-attention path as pretraining and calculates loss over every within-conversation token.
 
-The pretraining mixture is 80% DCLM, 12% SwallowCode-v2, 6% Nemotron-CC-Math, and 2% Cosmopedia v2. The conversational fine-tune is 80% SODA, 15% Topical-Chat, and 5% DailyDialog.
+The pretraining mixture is 80% DCLM, 12% SwallowCode-v2, 6% Nemotron-CC-Math, and 2% Cosmopedia v2. The conversational fine-tune is 90% SODA and 10% DailyDialog.
 
 ## Key files
 
@@ -132,12 +132,9 @@ See `DESIGN.md` for implementation details and `REFERENCES.md` for research sour
 
 These commands are specific to the dual RTX 3090 setup on Jared-PC.
 
-Set both cards to a temporary 300 W limit and force all four reported fans to 100%:
+Set all four reported fans to 100%:
 
 ```bash
-sudo nvidia-smi -i 0 -pl 300
-sudo nvidia-smi -i 1 -pl 300
-
 sudo --preserve-env=DISPLAY,WAYLAND_DISPLAY,XDG_RUNTIME_DIR,DBUS_SESSION_BUS_ADDRESS \
     nvidia-settings -c wayland-0 \
     -a '[gpu:0]/GPUFanControlState=1' \
@@ -170,11 +167,4 @@ sudo --preserve-env=DISPLAY,WAYLAND_DISPLAY,XDG_RUNTIME_DIR,DBUS_SESSION_BUS_ADD
     nvidia-settings -c wayland-0 \
     -a '[gpu:0]/GPUFanControlState=0' \
     -a '[gpu:1]/GPUFanControlState=0'
-```
-
-Restore the stock 350 W limits:
-
-```bash
-sudo nvidia-smi -i 0 -pl 350
-sudo nvidia-smi -i 1 -pl 350
 ```

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.13
+
+- Simplify conversational fine-tuning to a 50-million-token mixture of 90% SODA and 10% DailyDialog, loaded through the standard Hugging Face datasets streaming path.
+- Remove the unreliable Topical-Chat source and its custom JSONL loader while preserving packed newline-separated conversations, full next-token loss, and fast causal attention.
+- Send normal Discord progress embeds every five minutes, keep thermal throttling as inline GPU telemetry, and remove separate validation-result notifications.
+
 ## 1.0.12
 
 - Replace assistant-style instruction tuning with a 50-million-token conversational mixture of SODA, Topical-Chat, and DailyDialog.

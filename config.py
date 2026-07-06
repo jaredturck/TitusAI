@@ -175,31 +175,18 @@ INSTRUCTION_SOURCES = [
         'dataset': 'allenai/soda',
         'config': None,
         'split': 'train',
-        'loader': 'dataset',
         'messages_field': 'dialogue',
         'message_text_field': None,
-        'target_tokens': 40_000_000,
-    },
-    {
-        'name': 'topical_chat',
-        'dataset': 'Conversational-Reasoning/Topical-Chat',
-        'config': None,
-        'split': 'train',
-        'loader': 'jsonl',
-        'data_files': ['train.jsonl'],
-        'messages_field': 'content',
-        'message_text_field': 'message',
-        'target_tokens': 7_500_000,
+        'target_tokens': 45_000_000,
     },
     {
         'name': 'daily_dialog',
         'dataset': 'OpenRL/daily_dialog',
         'config': None,
         'split': 'train',
-        'loader': 'dataset',
         'messages_field': 'dialog',
         'message_text_field': None,
-        'target_tokens': 2_500_000,
+        'target_tokens': 5_000_000,
     },
 ]
 
@@ -207,7 +194,7 @@ INSTRUCTION_SOURCES = [
 DISCORD_CONFIG = {
     'enabled': True,
     'username': 'TitusAI Training',
-    'status_interval_seconds': 600,
+    'status_interval_seconds': 300,
     'request_timeout_seconds': 5,
 }
 

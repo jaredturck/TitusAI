@@ -5,6 +5,7 @@ import random
 import socket
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -15,6 +16,7 @@ from torch.utils.data import DataLoader
 from checkpoint import (
     capture_rng_state,
     find_latest_checkpoint,
+    find_latest_snapshot,
     save_inference_snapshot,
     save_training_checkpoint,
     load_training_checkpoint,
@@ -321,7 +323,22 @@ def save_full_checkpoint(model, optimizer, scheduler, model_config, checkpoint_p
         dist.barrier()
 
 
+def resolve_initial_weights(weights_path):
+    if weights_path is None:
+        return None
+
+    weights_path = Path(weights_path)
+    if weights_path.is_dir():
+        snapshot_path = find_latest_snapshot(weights_path)
+        assert snapshot_path is not None, f'No snapshots found in {weights_path}'
+        return snapshot_path
+
+    assert weights_path.exists(), f'Initial weights not found: {weights_path}'
+    return weights_path
+
+
 def load_initial_weights(model, weights_path):
+    weights_path = resolve_initial_weights(weights_path)
     if weights_path is None:
         return
 
@@ -364,7 +381,6 @@ def main():
     model.enable_gradient_checkpointing(
         TRAIN_CONFIG['gradient_checkpointing']
     )
-    load_initial_weights(model, TRAIN_CONFIG['initial_weights'])
     optimizer = create_optimizer(model, device)
 
     tokens_per_update = (
@@ -410,6 +426,8 @@ def main():
         samples_seen_in_epoch = checkpoint_data.get('samples_seen_in_epoch', 0)
         if rank == 0:
             print(f'[+] Resumed {latest_checkpoint.name}')
+    else:
+        load_initial_weights(model, TRAIN_CONFIG['initial_weights'])
 
     if world_size > 1:
         model = DistributedDataParallel(

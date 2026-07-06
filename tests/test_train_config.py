@@ -1,3 +1,5 @@
+import os
+
 import train
 
 
@@ -34,3 +36,22 @@ def test_select_training_config_requires_one_known_mode(monkeypatch, capsys):
 
     output = capsys.readouterr().out
     assert 'Training stopped: provide pretrain or instruction' in output
+
+
+def test_resolve_initial_weights_uses_newest_snapshot(tmp_path):
+    older = tmp_path / 'snapshot_00.pt'
+    newer = tmp_path / 'snapshot_01.pt'
+    older.touch()
+    newer.touch()
+
+    older_time = newer.stat().st_mtime - 10
+    os.utime(older, (older_time, older_time))
+
+    assert train.resolve_initial_weights(tmp_path) == newer
+
+
+def test_resolve_initial_weights_keeps_explicit_file(tmp_path):
+    weights_path = tmp_path / 'snapshot_custom.pt'
+    weights_path.touch()
+
+    assert train.resolve_initial_weights(weights_path) == weights_path

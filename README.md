@@ -75,17 +75,17 @@ Progress is printed about every five seconds with processed conversations, perce
 
 ### 8. Run instruction training
 
-The instruction mode is hard-coded in `TRAIN_CONFIGS['instruction']` inside `config.py` and currently starts from `weights/snapshots/pretrain/snapshot_07.pt`.
+The instruction mode is hard-coded in `TRAIN_CONFIGS['instruction']` inside `config.py`. A saved instruction checkpoint resumes first; otherwise training automatically starts from the newest snapshot under `weights/snapshots/pretrain/`.
 
 ```bash
 CUDA_VISIBLE_DEVICES=0,1 PYTHONUNBUFFERED=1 torchrun --standalone --nproc_per_node=2 --max_restarts=0 train.py instruction
 ```
 
-Instruction checkpoints and snapshots are stored separately under `weights/checkpoints/instructions/` and `weights/snapshots/instructions/`.
+Instruction checkpoints and snapshots are stored separately under `weights/checkpoints/instructions_50m/` and `weights/snapshots/instructions_50m/`.
 
 ### 9. Inspect the instruction-tuned model
 
-Set `INFERENCE_CONFIG['snapshot_run']` to `instructions` inside `config.py`, then run:
+Set `INFERENCE_CONFIG['snapshot_run']` to `instructions_50m` inside `config.py`, then run:
 
 ```bash
 python inference.py

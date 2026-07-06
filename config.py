@@ -70,11 +70,17 @@ TRAIN_CONFIGS = {
         'isolate_packed_documents': False,
     },
     'instruction': {
-        'run_name': 'instructions',
+        'run_name': 'instructions_50m',
         'train_data_path': PROCESSED_DATA_PATH / 'instructions' / 'train',
         'validation_data_path': PROCESSED_DATA_PATH / 'instructions' / 'validation',
-        'initial_weights': SNAPSHOT_PATH / 'pretrain' / 'snapshot_07.pt',
+        'initial_weights': SNAPSHOT_PATH / 'pretrain',
         'isolate_packed_documents': True,
+        'micro_batch_size': 2,
+        'gradient_accumulation_steps': 16,
+        'gradient_checkpointing': False,
+        'max_train_tokens': 50_000_000,
+        'validation_interval_steps': 100,
+        'checkpoint_interval_steps': 200,
     },
 }
 
@@ -161,7 +167,6 @@ INSTRUCTION_CONFIG = {
     'progress_interval_seconds': 5,
     'progress_check_conversations': 1000,
 }
-
 
 DISCORD_CONFIG = {
     'enabled': True,

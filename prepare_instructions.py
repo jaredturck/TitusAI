@@ -1,8 +1,9 @@
 import json
+import re
 import time
 from pathlib import Path
 
-from config import INSTRUCTION_CONFIG
+from config import INSTRUCTION_CONFIG, INSTRUCTION_SOURCES
 from data_utils import (
     SequencePacker,
     ShardWriter,
@@ -10,34 +11,63 @@ from data_utils import (
     stable_hash,
     write_manifest,
 )
-from prepare_data import clear_prepared_directory
+from prepare_data import BufferedShuffleStream, clear_prepared_directory
 from tokenizer import document_end_token_id, get_tokenizer_metadata, load_tokenizer, save_tokenizer
 
 
-def load_instruction_stream():
-    from datasets import load_dataset
-
-    arguments = {
-        'path': INSTRUCTION_CONFIG['dataset'],
-        'split': INSTRUCTION_CONFIG['split'],
-        'streaming': True,
-    }
-
-    if INSTRUCTION_CONFIG['config'] is not None:
-        arguments['name'] = INSTRUCTION_CONFIG['config']
-
-    return load_dataset(**arguments)
+WHITESPACE = re.compile(r'\s+')
 
 
-def instruction_total_conversations(dataset):
-    splits = dataset.info.splits
-    if splits is None:
-        return None
+class JsonlConversationStream:
+    def __init__(self, source):
+        self.source = source
 
-    split = splits.get(INSTRUCTION_CONFIG['split'])
-    if split is None:
-        return None
-    return split.num_examples
+    def __iter__(self):
+        from huggingface_hub import HfFileSystem
+
+        filesystem = HfFileSystem()
+        block_size = self.source.get('read_block_size', 8 * 1024 * 1024)
+
+        for data_file in self.source['data_files']:
+            filename = f'datasets/{self.source["dataset"]}/{data_file}'
+            with filesystem.open(filename, 'rb', block_size=block_size) as file:
+                for line_number, line in enumerate(file, start=1):
+                    if not line.strip():
+                        continue
+
+                    try:
+                        yield json.loads(line)
+                    except json.JSONDecodeError as error:
+                        raise RuntimeError(
+                            f'Invalid JSON in {filename} at line {line_number}'
+                        ) from error
+
+
+def load_instruction_stream(source, pass_index=0, shuffle=True):
+    if source.get('loader') == 'jsonl':
+        dataset = JsonlConversationStream(source)
+    else:
+        from datasets import load_dataset
+
+        arguments = {
+            'path': source['dataset'],
+            'split': source['split'],
+            'streaming': True,
+        }
+
+        if source.get('config') is not None:
+            arguments['name'] = source['config']
+
+        dataset = load_dataset(**arguments)
+
+    if not shuffle:
+        return dataset
+
+    return BufferedShuffleStream(
+        dataset,
+        INSTRUCTION_CONFIG['random_seed'] + pass_index,
+        INSTRUCTION_CONFIG['shuffle_buffer_size'],
+    )
 
 
 def format_duration(seconds):
@@ -50,210 +80,267 @@ def format_duration(seconds):
     return f'{minutes}m {seconds:02d}s'
 
 
-def format_instruction_progress(processed, total, accepted, rejected, elapsed):
+def format_instruction_progress(source_name, processed, accepted, rejected, tokens, target_tokens, elapsed):
     conversations_per_second = processed / elapsed if elapsed > 0 else 0
-    progress = f'[+] Processed {processed:,}'
-
-    if total is not None:
-        percentage = 100 * processed / total
-        progress += f' / {total:,} conversations ({percentage:.2f}%)'
-    else:
-        progress += ' conversations'
-
-    progress += (
-        f' | accepted={accepted:,} rejected={rejected:,}'
-        f' | {conversations_per_second:,.1f} conversations/s'
-        f' | elapsed={format_duration(elapsed)}'
+    percentage = 100 * tokens / target_tokens
+    progress = (
+        f'[+] {source_name}: {tokens:,} / {target_tokens:,} tokens '
+        f'({percentage:.2f}%) | processed={processed:,} '
+        f'accepted={accepted:,} rejected={rejected:,} '
+        f'| {conversations_per_second:,.1f} conversations/s '
+        f'| elapsed={format_duration(elapsed)}'
     )
 
-    if total is not None and conversations_per_second > 0:
-        remaining = max(0, total - processed)
-        progress += f' | ETA={format_duration(remaining / conversations_per_second)}'
+    if conversations_per_second > 0 and tokens > 0:
+        tokens_per_conversation = tokens / accepted if accepted > 0 else 0
+        if tokens_per_conversation > 0:
+            remaining = max(0, target_tokens - tokens)
+            eta = remaining / (conversations_per_second * tokens_per_conversation)
+            progress += f' | ETA={format_duration(eta)}'
 
     return progress
 
 
-def encode_text(tokenizer, text):
-    return tokenizer.encode(text, add_special_tokens=False)
+def normalize_message(message):
+    if not isinstance(message, str):
+        return None
+
+    message = message.replace('\r\n', '\n').replace('\r', '\n')
+    message = WHITESPACE.sub(' ', message).strip()
+    return message or None
+
+
+def unwrap_conversation_record(record, messages_field):
+    if messages_field in record:
+        return record
+
+    if len(record) == 1:
+        nested = next(iter(record.values()))
+        if isinstance(nested, dict) and messages_field in nested:
+            return nested
+
+    return record
+
+
+def extract_conversation_messages(record, source):
+    if not isinstance(record, dict):
+        return []
+
+    messages_field = source['messages_field']
+    record = unwrap_conversation_record(record, messages_field)
+    messages = record.get(messages_field)
+    if not isinstance(messages, list):
+        return []
+
+    text_field = source.get('message_text_field')
+    normalized = []
+
+    for message in messages:
+        if isinstance(message, str):
+            text = message
+        elif isinstance(message, dict):
+            if text_field is not None:
+                text = message.get(text_field)
+            else:
+                text = None
+                for field in ('message', 'utterance', 'value', 'content'):
+                    if isinstance(message.get(field), str):
+                        text = message[field]
+                        break
+        else:
+            text = None
+
+        text = normalize_message(text)
+        if text is not None:
+            normalized.append(text)
+
+    return normalized
 
 
 def build_instruction_tokens(tokenizer, messages):
-    token_ids = []
-    loss_mask = []
-    has_assistant = False
-
-    direct_tokens = encode_text(tokenizer, '<|direct|>\n')
-    token_ids.extend(direct_tokens)
-    loss_mask.extend([0] * len(direct_tokens))
-
-    for message in messages:
-        role = message.get('role')
-        content = message.get('content')
-        if role not in {'system', 'user', 'assistant'}:
-            continue
-        if not isinstance(content, str) or not content.strip():
-            continue
-
-        prefix = encode_text(tokenizer, f'<|im_start|>{role}\n')
-        body = encode_text(tokenizer, content.strip())
-        suffix = encode_text(tokenizer, '<|im_end|>\n')
-
-        if role == 'assistant':
-            has_assistant = True
-
-        token_ids.extend(prefix)
-        loss_mask.extend([0] * len(prefix))
-        token_ids.extend(body)
-        loss_mask.extend([1 if role == 'assistant' else 0] * len(body))
-        token_ids.extend(suffix)
-        loss_mask.extend([1 if role == 'assistant' else 0] * len(suffix))
-
+    conversation = '\n'.join(messages)
+    token_ids = tokenizer.encode(conversation, add_special_tokens=False)
     token_ids.append(document_end_token_id(tokenizer))
-    loss_mask.append(1 if has_assistant else 0)
-    return token_ids, loss_mask
+    return token_ids
 
 
-def create_packers(output_path):
-    train_path = output_path / 'train'
-    validation_path = output_path / 'validation'
-    clear_prepared_directory(train_path)
-    clear_prepared_directory(validation_path)
-
+def create_source_packers(output_path, source_name):
     sequence_length = INSTRUCTION_CONFIG['sequence_length']
     sequences_per_shard = INSTRUCTION_CONFIG['sequences_per_shard']
 
     return {
-        'train_path': train_path,
-        'validation_path': validation_path,
         'train': SequencePacker(
             ShardWriter(
-                train_path,
-                'smol_smoltalk',
+                output_path / 'train',
+                source_name,
                 sequence_length,
                 sequences_per_shard,
+                store_loss_mask=False,
             ),
             sequence_length,
         ),
         'validation': SequencePacker(
             ShardWriter(
-                validation_path,
-                'smol_smoltalk',
+                output_path / 'validation',
+                source_name,
                 sequence_length,
                 sequences_per_shard,
+                store_loss_mask=False,
             ),
             sequence_length,
         ),
     }
 
 
-def main():
-    tokenizer = load_tokenizer()
-    save_tokenizer(tokenizer)
-    tokenizer_metadata = get_tokenizer_metadata(tokenizer)
-    output_path = Path(INSTRUCTION_CONFIG['output_path'])
-    packers = create_packers(output_path)
-    dataset = load_instruction_stream()
-    total_conversations = instruction_total_conversations(dataset)
+def prepare_source(tokenizer, output_path, source):
+    packers = create_source_packers(output_path, source['name'])
+    target_tokens = source['target_tokens']
+    processed_tokens = 0
+    processed = 0
     accepted = 0
     rejected = 0
-    start_time = time.monotonic()
-    last_log_time = start_time
+    pass_index = 0
+    started = time.monotonic()
+    last_log_time = started
 
-    for record in dataset:
-        processed = accepted + rejected
-        if (
-            processed > 0
-            and processed % INSTRUCTION_CONFIG['progress_check_conversations'] == 0
-        ):
-            current_time = time.monotonic()
-            if current_time - last_log_time >= INSTRUCTION_CONFIG['progress_interval_seconds']:
-                print(
-                    format_instruction_progress(
-                        processed,
-                        total_conversations,
-                        accepted,
-                        rejected,
-                        current_time - start_time,
-                    ),
-                    flush=True,
-                )
-                last_log_time = current_time
+    while processed_tokens < target_tokens:
+        accepted_before_pass = accepted
+        dataset = load_instruction_stream(source, pass_index)
 
-        messages = record.get(INSTRUCTION_CONFIG['messages_field'])
-        if not isinstance(messages, list):
-            rejected += 1
-            continue
+        for record in dataset:
+            processed += 1
+            messages = extract_conversation_messages(record, source)
+            if len(messages) < INSTRUCTION_CONFIG['minimum_messages']:
+                rejected += 1
+                continue
 
-        token_ids, loss_mask = build_instruction_tokens(tokenizer, messages)
-        if len(token_ids) > INSTRUCTION_CONFIG['maximum_conversation_tokens']:
-            rejected += 1
-            continue
+            token_ids = build_instruction_tokens(tokenizer, messages)
+            serialized = json.dumps(messages, ensure_ascii=False)
+            document_id = f'{source["name"]}:{stable_hash(serialized)}'
+            split = deterministic_split(
+                document_id,
+                INSTRUCTION_CONFIG['validation_fraction'],
+            )
+            packers[split].add_document(token_ids)
+            processed_tokens += len(token_ids)
+            accepted += 1
 
-        if sum(loss_mask) == 0:
-            rejected += 1
-            continue
+            if processed % INSTRUCTION_CONFIG['progress_check_conversations'] == 0:
+                now = time.monotonic()
+                if now - last_log_time >= INSTRUCTION_CONFIG['progress_interval_seconds']:
+                    print(
+                        format_instruction_progress(
+                            source['name'],
+                            processed,
+                            accepted,
+                            rejected,
+                            processed_tokens,
+                            target_tokens,
+                            now - started,
+                        ),
+                        flush=True,
+                    )
+                    last_log_time = now
 
-        serialized_messages = json.dumps(
-            messages,
-            sort_keys=True,
-            ensure_ascii=False,
-        )
-        document_id = stable_hash(serialized_messages)
-        split = deterministic_split(
-            document_id,
-            INSTRUCTION_CONFIG['validation_fraction'],
-        )
-        packers[split].add_document(token_ids, loss_mask)
-        accepted += 1
+            if processed_tokens >= target_tokens:
+                break
 
-    processed = accepted + rejected
+        if accepted == accepted_before_pass:
+            raise RuntimeError(
+                f'No usable conversations found for {source["name"]}'
+            )
+
+        pass_index += 1
+
     print(
         format_instruction_progress(
+            source['name'],
             processed,
-            total_conversations,
             accepted,
             rejected,
-            time.monotonic() - start_time,
+            processed_tokens,
+            target_tokens,
+            time.monotonic() - started,
         ),
         flush=True,
     )
 
     train_statistics = packers['train'].close()
     validation_statistics = packers['validation'].close()
-    statistics = [{
-        'name': 'smol_smoltalk',
+    return {
+        'name': source['name'],
+        'dataset': source['dataset'],
+        'target_tokens': target_tokens,
+        'processed_tokens': processed_tokens,
         'accepted_conversations': accepted,
         'rejected_conversations': rejected,
-        'train': {
-            key: value
-            for key, value in train_statistics.items()
-            if key != 'shards'
-        },
-        'validation': {
-            key: value
-            for key, value in validation_statistics.items()
-            if key != 'shards'
-        },
-    }]
+        'passes': pass_index,
+        'train': train_statistics,
+        'validation': validation_statistics,
+    }
+
+
+def manifest_source_statistics(statistics, split):
+    split_statistics = statistics[split]
+    return {
+        'name': statistics['name'],
+        'dataset': statistics['dataset'],
+        'target_tokens': statistics['target_tokens'],
+        'processed_tokens': statistics['processed_tokens'],
+        'accepted_conversations': statistics['accepted_conversations'],
+        'rejected_conversations': statistics['rejected_conversations'],
+        'passes': statistics['passes'],
+        'num_sequences': split_statistics['num_sequences'],
+        'output_tokens': split_statistics['output_tokens'],
+    }
+
+
+def main():
+    configured_tokens = sum(source['target_tokens'] for source in INSTRUCTION_SOURCES)
+    assert configured_tokens == INSTRUCTION_CONFIG['max_total_tokens']
+
+    tokenizer = load_tokenizer()
+    save_tokenizer(tokenizer)
+    tokenizer_metadata = get_tokenizer_metadata(tokenizer)
+    output_path = Path(INSTRUCTION_CONFIG['output_path'])
+    train_path = output_path / 'train'
+    validation_path = output_path / 'validation'
+    clear_prepared_directory(train_path)
+    clear_prepared_directory(validation_path)
+
+    source_statistics = [
+        prepare_source(tokenizer, output_path, source)
+        for source in INSTRUCTION_SOURCES
+    ]
+    train_shards = []
+    validation_shards = []
+
+    for statistics in source_statistics:
+        train_shards.extend(statistics['train']['shards'])
+        validation_shards.extend(statistics['validation']['shards'])
 
     write_manifest(
-        packers['train_path'],
+        train_path,
         tokenizer_metadata,
         INSTRUCTION_CONFIG['sequence_length'],
-        statistics,
-        train_statistics['shards'],
+        [
+            manifest_source_statistics(statistics, 'train')
+            for statistics in source_statistics
+        ],
+        train_shards,
     )
     write_manifest(
-        packers['validation_path'],
+        validation_path,
         tokenizer_metadata,
         INSTRUCTION_CONFIG['sequence_length'],
-        statistics,
-        validation_statistics['shards'],
+        [
+            manifest_source_statistics(statistics, 'validation')
+            for statistics in source_statistics
+        ],
+        validation_shards,
     )
 
-    print(f'[+] Accepted conversations: {accepted:,}')
-    print(f'[+] Rejected conversations: {rejected:,}')
-    print('[+] Instruction data preparation complete')
+    print('[+] Conversation data preparation complete')
 
 
 if __name__ == '__main__':

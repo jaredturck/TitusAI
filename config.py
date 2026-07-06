@@ -70,17 +70,19 @@ TRAIN_CONFIGS = {
         'isolate_packed_documents': False,
     },
     'instruction': {
-        'run_name': 'instructions_50m',
+        'run_name': 'conversations_50m',
         'train_data_path': PROCESSED_DATA_PATH / 'instructions' / 'train',
         'validation_data_path': PROCESSED_DATA_PATH / 'instructions' / 'validation',
-        'initial_weights': SNAPSHOT_PATH / 'pretrain',
-        'isolate_packed_documents': True,
-        'micro_batch_size': 2,
-        'gradient_accumulation_steps': 16,
+        'initial_weights': WEIGHTS_PATH,
+        'isolate_packed_documents': False,
+        'micro_batch_size': 4,
+        'gradient_accumulation_steps': 8,
         'gradient_checkpointing': False,
+        'learning_rate': 3e-5,
+        'min_learning_rate': 3e-6,
         'max_train_tokens': 50_000_000,
         'validation_interval_steps': 100,
-        'checkpoint_interval_steps': 200,
+        'checkpoint_interval_steps': 100,
     },
 }
 
@@ -155,18 +157,52 @@ DATA_SOURCES = [
 ]
 
 INSTRUCTION_CONFIG = {
-    'dataset': 'HuggingFaceTB/smol-smoltalk',
-    'config': None,
-    'split': 'train',
-    'messages_field': 'messages',
     'sequence_length': MODEL_CONFIG['max_seq_len'],
     'sequences_per_shard': 1024,
     'validation_fraction': 0.002,
-    'maximum_conversation_tokens': MODEL_CONFIG['max_seq_len'] - 1,
     'output_path': PROCESSED_DATA_PATH / 'instructions',
     'progress_interval_seconds': 5,
     'progress_check_conversations': 1000,
+    'shuffle_buffer_size': 10_000,
+    'random_seed': 1337,
+    'minimum_messages': 2,
+    'max_total_tokens': 50_000_000,
 }
+
+INSTRUCTION_SOURCES = [
+    {
+        'name': 'soda',
+        'dataset': 'allenai/soda',
+        'config': None,
+        'split': 'train',
+        'loader': 'dataset',
+        'messages_field': 'dialogue',
+        'message_text_field': None,
+        'target_tokens': 40_000_000,
+    },
+    {
+        'name': 'topical_chat',
+        'dataset': 'Conversational-Reasoning/Topical-Chat',
+        'config': None,
+        'split': 'train',
+        'loader': 'jsonl',
+        'data_files': ['train.jsonl'],
+        'messages_field': 'content',
+        'message_text_field': 'message',
+        'target_tokens': 7_500_000,
+    },
+    {
+        'name': 'daily_dialog',
+        'dataset': 'OpenRL/daily_dialog',
+        'config': None,
+        'split': 'train',
+        'loader': 'dataset',
+        'messages_field': 'dialog',
+        'message_text_field': None,
+        'target_tokens': 2_500_000,
+    },
+]
+
 
 DISCORD_CONFIG = {
     'enabled': True,
@@ -188,5 +224,4 @@ GENERATION_CONFIG = {
 INFERENCE_CONFIG = {
     'device': 'cpu',
     'threads': 24,
-    'system_prompt': 'You are Titus, a helpful and concise assistant.',
 }

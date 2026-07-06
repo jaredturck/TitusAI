@@ -1,12 +1,12 @@
 import torch
 
-from config import DATA_SOURCES, MODEL_CONFIG, SPECIAL_TOKENS
+from config import DATA_SOURCES, INSTRUCTION_SOURCES, MODEL_CONFIG, SPECIAL_TOKENS
 from data_utils import extract_first
 from model import TitusModel
 from prepare_data import load_source_stream
+from prepare_instructions import extract_conversation_messages, load_instruction_stream
 from process_utils import hard_exit_after_success
 from tokenizer import document_end_token_id, get_tokenizer_metadata, load_tokenizer, save_tokenizer
-
 
 def check_tokenizer():
     tokenizer = load_tokenizer()
@@ -22,7 +22,6 @@ def check_tokenizer():
     print(f'[+] Document end token ID: {document_end_token_id(tokenizer)}')
     return tokenizer, metadata
 
-
 def check_model(metadata):
     model_config = dict(MODEL_CONFIG)
     model_config['vocab_size'] = metadata['vocab_size']
@@ -31,7 +30,6 @@ def check_model(metadata):
         model = TitusModel(model_config)
 
     print(f'[+] Model parameters: {model.parameter_count():,}')
-
 
 def check_datasets():
     for source in DATA_SOURCES:
@@ -54,13 +52,32 @@ def check_datasets():
             f'{len(text):,} characters, fields={sorted(record.keys())}'
         )
 
+def check_conversation_datasets():
+    for source in INSTRUCTION_SOURCES:
+        print(f'[+] Checking {source["name"]}...')
+        dataset = load_instruction_stream(source, shuffle=False)
+        iterator = iter(dataset)
+
+        try:
+            record = next(iterator)
+        finally:
+            close = getattr(iterator, 'close', None)
+            if close is not None:
+                close()
+
+        messages = extract_conversation_messages(record, source)
+        assert len(messages) >= 2
+        print(
+            f'[+] {source["name"]}: '
+            f'{len(messages):,} messages in sampled conversation'
+        )
 
 def main():
     _, metadata = check_tokenizer()
     check_model(metadata)
     check_datasets()
+    check_conversation_datasets()
     print('[+] Setup check complete')
-
 
 def run():
     main()

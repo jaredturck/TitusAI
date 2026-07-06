@@ -54,7 +54,7 @@ F.scaled_dot_product_attention(
 )
 ```
 
-This permits PyTorch to choose an optimized exact-attention kernel. When explicit packed-document isolation is enabled, Titus constructs a boolean causal-and-segment mask instead.
+This permits PyTorch to choose an optimized exact-attention kernel. Both pretraining and conversational fine-tuning use this path. Segment IDs remain in prepared records for boundary bookkeeping, but conversational training does not build a document-isolation attention mask.
 
 ## Tied vocabulary projection
 
@@ -79,18 +79,15 @@ labels = record[1:2049]
 
 The packer advances by 2,048 tokens, so the final token of one record becomes the first input token of the next record without being trained as a target twice.
 
-Each token also has a local segment ID identifying its source document. A target is replaced by `-100` when:
+Each token also has a local segment ID identifying its source document. A target is replaced by `-100` only when it crosses from one packed document to another, unless an optional loss-mask file is present.
 
-- Its loss mask is zero, or
-- It crosses from one packed document to another.
-
-Base-pretraining shards do not store a loss-mask file because every within-document target contributes. Instruction shards store a one-byte mask so only assistant output contributes.
+Pretraining and conversational shards do not store loss-mask files. Conversational records contain natural message text separated by newlines and end with the existing document-end token. Every within-conversation token contributes to next-token loss, while later packed conversations may still attend to earlier context through ordinary causal attention.
 
 ## Checkpoint consistency
 
 Snapshots and checkpoints are first written to a `.writing` path and then committed with `os.replace()`. The rename is atomic on the same filesystem.
 
-Full checkpoints are taken only after an optimizer update. They record the number of per-rank samples committed in the current deterministic shard order. Resume therefore reconstructs the same shuffle and starts after the last applied update rather than replaying the epoch.
+Full checkpoints are taken only after an optimizer update. They record the number of per-rank samples committed in the current deterministic shard order. The current conversation run resumes its own newest full checkpoint. A fresh conversation run otherwise inherits model weights from the newest full checkpoint across earlier runs and starts a new optimizer and scheduler.
 
 ## Reasoning controls
 
@@ -105,4 +102,4 @@ The tokenizer adds:
 <|/final|>
 ```
 
-These are behavioural control tokens, not additional neural modules. `generate.py` extracts hidden reasoning from final output and forces a closing thinking block when the configured reasoning budget is reached.
+These tokens remain in the vocabulary for checkpoint compatibility. The conversational fine-tune and default inference path use plain newline-separated turns instead of role, mode, or reasoning prefixes.

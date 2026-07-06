@@ -1,13 +1,18 @@
+import io
+import json
+
+import huggingface_hub
+
 from prepare_instructions import (
     build_instruction_tokens,
+    create_source_packers,
+    extract_conversation_messages,
     format_instruction_progress,
+    load_instruction_stream,
 )
 
 
 class InstructionTokenizer:
-    def __init__(self):
-        self.eos_token_id = 0
-
     def encode(self, text, add_special_tokens=False):
         return [ord(character) % 251 + 1 for character in text]
 
@@ -17,51 +22,115 @@ class InstructionTokenizer:
         return 1
 
 
-def test_instruction_without_assistant_has_no_loss():
+def test_conversation_tokens_use_newlines_without_role_prefixes():
     tokenizer = InstructionTokenizer()
-    _, loss_mask = build_instruction_tokens(tokenizer, [
-        {
-            'role': 'user',
-            'content': 'Hello',
-        },
+    token_ids = build_instruction_tokens(tokenizer, [
+        'Hey you',
+        'Morning, sleepyhead',
     ])
-    assert sum(loss_mask) == 0
+    expected = tokenizer.encode(
+        'Hey you\nMorning, sleepyhead',
+        add_special_tokens=False,
+    ) + [0]
+
+    assert token_ids == expected
 
 
-def test_instruction_masks_only_assistant_tokens():
-    tokenizer = InstructionTokenizer()
-    _, loss_mask = build_instruction_tokens(tokenizer, [
-        {
-            'role': 'user',
-            'content': 'Question',
+def test_extracts_soda_dialogue():
+    source = {
+        'messages_field': 'dialogue',
+        'message_text_field': None,
+    }
+    messages = extract_conversation_messages({
+        'dialogue': ['Hello', 'Hi there'],
+    }, source)
+
+    assert messages == ['Hello', 'Hi there']
+
+
+def test_extracts_nested_topical_chat_dialogue():
+    source = {
+        'messages_field': 'content',
+        'message_text_field': 'message',
+    }
+    messages = extract_conversation_messages({
+        'conversation-id': {
+            'content': [
+                {'agent': 'agent_1', 'message': 'Hello\nthere'},
+                {'agent': 'agent_2', 'message': 'Hi'},
+            ],
         },
-        {
-            'role': 'assistant',
-            'content': 'Answer',
-        },
-    ])
-    assert sum(loss_mask) > 0
-    assert loss_mask[-1] == 1
+    }, source)
+
+    assert messages == ['Hello there', 'Hi']
 
 
-def test_instruction_progress_includes_total_speed_and_eta():
+def test_extracts_daily_dialogue():
+    source = {
+        'messages_field': 'dialog',
+        'message_text_field': None,
+    }
+    messages = extract_conversation_messages({
+        'dialog': ['How are you?', 'Pretty good.'],
+    }, source)
+
+    assert messages == ['How are you?', 'Pretty good.']
+
+
+def test_instruction_progress_includes_token_target_speed_and_eta():
     progress = format_instruction_progress(
+        'soda',
         400_000,
-        500_000,
         390_000,
         10_000,
+        32_000_000,
+        40_000_000,
         1000,
     )
 
-    assert '400,000 / 500,000 conversations (80.00%)' in progress
-    assert 'accepted=390,000 rejected=10,000' in progress
+    assert 'soda: 32,000,000 / 40,000,000 tokens (80.00%)' in progress
+    assert 'processed=400,000 accepted=390,000 rejected=10,000' in progress
     assert '400.0 conversations/s' in progress
-    assert 'ETA=4m 10s' in progress
+    assert 'ETA=' in progress
 
 
-def test_instruction_progress_works_without_dataset_total():
-    progress = format_instruction_progress(10_000, None, 9_000, 1_000, 100)
+class ConversationFileSystem:
+    def open(self, filename, mode, block_size):
+        assert filename == 'datasets/example/topical/train.jsonl'
+        assert mode == 'rb'
+        assert block_size == 8 * 1024 * 1024
+        record = {
+            'conversation-1': {
+                'content': [
+                    {'message': 'Hello'},
+                    {'message': 'Hi there'},
+                ],
+            },
+        }
+        return io.BytesIO(json.dumps(record).encode('utf-8') + b'\n')
 
-    assert 'Processed 10,000 conversations' in progress
-    assert '%' not in progress
-    assert 'ETA=' not in progress
+
+def test_jsonl_conversation_stream_reads_topical_chat(monkeypatch):
+    monkeypatch.setattr(huggingface_hub, 'HfFileSystem', ConversationFileSystem)
+    source = {
+        'dataset': 'example/topical',
+        'loader': 'jsonl',
+        'data_files': ['train.jsonl'],
+        'messages_field': 'content',
+        'message_text_field': 'message',
+    }
+
+    records = list(load_instruction_stream(source, shuffle=False))
+    messages = extract_conversation_messages(records[0], source)
+
+    assert messages == ['Hello', 'Hi there']
+
+
+def test_conversation_packers_do_not_store_loss_masks(tmp_path):
+    packers = create_source_packers(tmp_path, 'conversation')
+    packers['train'].add_document([1] * 2049)
+    train_statistics = packers['train'].close()
+    packers['validation'].close()
+
+    assert train_statistics['shards'][0]['loss_mask'] is None
+    assert not list((tmp_path / 'train').glob('*.loss.bin'))

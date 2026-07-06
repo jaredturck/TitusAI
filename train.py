@@ -16,6 +16,7 @@ from torch.utils.data import DataLoader
 from checkpoint import (
     capture_rng_state,
     find_latest_checkpoint,
+    find_latest_checkpoint_recursive,
     find_latest_snapshot,
     save_inference_snapshot,
     save_training_checkpoint,
@@ -33,7 +34,6 @@ from dataset import ShardShuffleSampler, TitusDataset
 from model import TitusModel
 from notifications import DiscordNotifier
 
-
 def select_training_config(arguments=None):
     arguments = sys.argv[1:] if arguments is None else arguments
     if len(arguments) != 1 or arguments[0] not in TRAIN_CONFIGS:
@@ -45,7 +45,6 @@ def select_training_config(arguments=None):
 
     TRAIN_CONFIG.update(TRAIN_CONFIGS[arguments[0]])
     return True
-
 
 def format_duration(seconds):
     seconds = max(0, int(seconds))
@@ -59,12 +58,10 @@ def format_duration(seconds):
         return f'{hours}h {minutes:02d}m {seconds:02d}s'
     return f'{minutes}m {seconds:02d}s'
 
-
 def format_progress_bar(progress, width=18):
     progress = min(max(progress, 0.0), 100.0)
     filled = round(width * progress / 100)
     return '█' * filled + '░' * (width - filled)
-
 
 def training_status_fields(run_name, global_step, tokens_seen, loss, smoothed_loss, validation_loss, learning_rate, tokens_per_second, elapsed_seconds, max_train_tokens, snapshot_name, peak_gpu_memory):
     progress = 100 * tokens_seen / max_train_tokens
@@ -88,11 +85,9 @@ def training_status_fields(run_name, global_step, tokens_seen, loss, smoothed_lo
         ('Latest snapshot', snapshot_name, False),
     ]
 
-
 def training_status_description(tokens_seen, max_train_tokens):
     progress = 100 * tokens_seen / max_train_tokens
     return f'`{format_progress_bar(progress)}` **{progress:.2f}% complete**'
-
 
 def format_peak_gpu_memory(device):
     if device.type != 'cuda':
@@ -150,7 +145,6 @@ class WarmupCosineScheduler:
             self.learning_rate_for_step(self.step_number)
         )
 
-
 def setup_distributed():
     world_size = int(os.environ.get('WORLD_SIZE', '1'))
     rank = int(os.environ.get('RANK', '0'))
@@ -169,11 +163,9 @@ def setup_distributed():
 
     return rank, local_rank, world_size, device
 
-
 def cleanup_distributed(world_size):
     if world_size > 1 and dist.is_initialized():
         dist.destroy_process_group()
-
 
 def seed_everything(seed, rank):
     seed = seed + rank
@@ -182,7 +174,6 @@ def seed_everything(seed, rank):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
-
 
 def create_optimizer(model, device):
     decay_parameters = []
@@ -215,7 +206,6 @@ def create_optimizer(model, device):
         fused=device.type == 'cuda',
     )
 
-
 def create_loader(dataset, rank, world_size, training):
     sampler = ShardShuffleSampler(
         dataset,
@@ -241,13 +231,11 @@ def create_loader(dataset, rank, world_size, training):
 
     return DataLoader(**loader_arguments), sampler
 
-
 def reduce_sum(value, device, world_size):
     tensor = torch.tensor(value, device=device, dtype=torch.long)
     if world_size > 1:
         dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
     return int(tensor.item())
-
 
 def gather_rng_states(rank, world_size):
     local_state = capture_rng_state()
@@ -257,7 +245,6 @@ def gather_rng_states(rank, world_size):
     gathered_states = [None] * world_size if rank == 0 else None
     dist.gather_object(local_state, gathered_states, dst=0)
     return gathered_states
-
 
 def validate(model, validation_loader, device, world_size):
     model.eval()
@@ -297,7 +284,6 @@ def validate(model, validation_loader, device, world_size):
     model.train()
     return float((total_loss / total_tokens.clamp_min(1)).item())
 
-
 def save_full_checkpoint(model, optimizer, scheduler, model_config, checkpoint_path, rank, world_size, global_step, tokens_seen, best_validation_loss, epoch, samples_seen_in_epoch):
     rng_states = gather_rng_states(rank, world_size)
 
@@ -322,20 +308,36 @@ def save_full_checkpoint(model, optimizer, scheduler, model_config, checkpoint_p
     if world_size > 1:
         dist.barrier()
 
-
 def resolve_initial_weights(weights_path):
     if weights_path is None:
         return None
 
     weights_path = Path(weights_path)
     if weights_path.is_dir():
+        checkpoint_path = find_latest_checkpoint_recursive(weights_path)
+        if checkpoint_path is not None:
+            return checkpoint_path
+
         snapshot_path = find_latest_snapshot(weights_path)
-        assert snapshot_path is not None, f'No snapshots found in {weights_path}'
+        assert snapshot_path is not None, f'No model weights found in {weights_path}'
         return snapshot_path
 
     assert weights_path.exists(), f'Initial weights not found: {weights_path}'
     return weights_path
 
+def select_training_start(checkpoint_path, initial_weights, resume_training):
+    current_checkpoint = None
+    if resume_training:
+        current_checkpoint = find_latest_checkpoint(checkpoint_path)
+
+    if initial_weights is None:
+        return current_checkpoint, None
+
+    selected_weights_path = resolve_initial_weights(initial_weights)
+    if current_checkpoint == selected_weights_path:
+        return current_checkpoint, None
+
+    return None, selected_weights_path
 
 def load_initial_weights(model, weights_path):
     weights_path = resolve_initial_weights(weights_path)
@@ -349,7 +351,7 @@ def load_initial_weights(model, weights_path):
     )
     model.load_state_dict(weights['model'])
     print(f'[+] Initialized model weights from {weights_path}')
-
+    return weights_path
 
 def main():
     rank, local_rank, world_size, device = setup_distributed()
@@ -407,9 +409,12 @@ def main():
     epoch = 0
     samples_seen_in_epoch = 0
 
-    latest_checkpoint = None
-    if TRAIN_CONFIG['resume_training']:
-        latest_checkpoint = find_latest_checkpoint(checkpoint_path)
+    latest_checkpoint, selected_weights_path = select_training_start(
+        checkpoint_path,
+        TRAIN_CONFIG['initial_weights'],
+        TRAIN_CONFIG['resume_training'],
+    )
+    initial_weights_path = None
 
     if latest_checkpoint is not None:
         checkpoint_data = load_training_checkpoint(
@@ -427,7 +432,10 @@ def main():
         if rank == 0:
             print(f'[+] Resumed {latest_checkpoint.name}')
     else:
-        load_initial_weights(model, TRAIN_CONFIG['initial_weights'])
+        initial_weights_path = load_initial_weights(
+            model,
+            selected_weights_path,
+        )
 
     if world_size > 1:
         model = DistributedDataParallel(
@@ -457,7 +465,12 @@ def main():
             torch.cuda.get_device_name(index)
             for index in range(torch.cuda.device_count())
         ) or 'CPU'
-        resume_status = latest_checkpoint.name if latest_checkpoint is not None else 'New run'
+        if latest_checkpoint is not None:
+            resume_status = str(latest_checkpoint.relative_to(CHECKPOINT_PATH))
+        elif initial_weights_path is not None:
+            resume_status = f'Weights from {initial_weights_path}'
+        else:
+            resume_status = 'Random initialization'
 
         print(f'[+] Run: {run_name}')
         print(f'[+] Parameters: {parameter_count:,}')
@@ -471,7 +484,7 @@ def main():
             [
                 ('Run', run_name),
                 ('Host', socket.gethostname()),
-                ('Mode', 'Resumed' if latest_checkpoint is not None else 'Fresh run'),
+                ('Mode', 'Resumed' if latest_checkpoint is not None else 'Fresh schedule'),
                 ('Model', f'{parameter_count:,} parameters'),
                 ('Context length', f'{model_config["max_seq_len"]:,} tokens'),
                 ('Devices', gpu_names, False),

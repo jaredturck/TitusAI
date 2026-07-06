@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.12
+
+- Replace assistant-style instruction tuning with a 50-million-token conversational mixture of SODA, Topical-Chat, and DailyDialog.
+- Train packed newline-separated conversations with full next-token loss, ordinary causal attention, pretraining-sized batches, and no stored loss masks or document-isolation attention masks.
+- Resume the current conversation run normally while allowing a fresh run to inherit the newest earlier checkpoint, and align inference with plain conversational turns.
+
 ## 1.0.11
 
 - Report GPU 0 and GPU 1 separately in Discord startup and ten-minute progress embeds.

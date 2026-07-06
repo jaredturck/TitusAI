@@ -47,3 +47,15 @@ def test_chat_mode_token_is_outside_chat_template():
         mode='reason',
     )
     assert prompt == '<|reason|>\n<chat>Hello'
+
+
+def test_conversation_prompt_uses_plain_newline_turns():
+    from tokenizer import format_conversation_prompt
+
+    prompt = format_conversation_prompt([
+        'How are you?',
+        'Pretty good.',
+        {'content': 'What are you doing?'},
+    ])
+
+    assert prompt == 'How are you?\nPretty good.\nWhat are you doing?\n'

@@ -55,3 +55,58 @@ def test_resolve_initial_weights_keeps_explicit_file(tmp_path):
     weights_path.touch()
 
     assert train.resolve_initial_weights(weights_path) == weights_path
+
+
+def test_instruction_config_uses_fast_causal_training():
+    from config import TRAIN_CONFIGS
+
+    instruction = TRAIN_CONFIGS['instruction']
+    assert instruction['isolate_packed_documents'] is False
+    assert instruction['micro_batch_size'] == 4
+    assert instruction['gradient_accumulation_steps'] == 8
+    assert instruction['gradient_checkpointing'] is False
+    assert instruction['max_train_tokens'] == 50_000_000
+    assert instruction['learning_rate'] == 3e-5
+
+
+def test_resolve_initial_weights_prefers_full_checkpoint(tmp_path):
+    checkpoint = tmp_path / 'checkpoints' / 'pretrain' / 'checkpoint_000000100.pt'
+    snapshot = tmp_path / 'snapshots' / 'pretrain' / 'snapshot_00.pt'
+    checkpoint.parent.mkdir(parents=True)
+    snapshot.parent.mkdir(parents=True)
+    checkpoint.touch()
+    snapshot.touch()
+    os.utime(checkpoint, (100, 100))
+    os.utime(snapshot, (200, 200))
+
+    assert train.resolve_initial_weights(tmp_path) == checkpoint
+
+
+def test_select_training_start_resumes_only_newest_current_checkpoint(tmp_path):
+    current_path = tmp_path / 'checkpoints' / 'conversations_50m'
+    other_path = tmp_path / 'checkpoints' / 'pretrain'
+    current_path.mkdir(parents=True)
+    other_path.mkdir(parents=True)
+    current = current_path / 'checkpoint_000000010.pt'
+    other = other_path / 'checkpoint_000003818.pt'
+    current.touch()
+    other.touch()
+    os.utime(current, (200, 200))
+    os.utime(other, (100, 100))
+
+    resume, initial = train.select_training_start(
+        current_path,
+        tmp_path,
+        True,
+    )
+    assert resume == current
+    assert initial is None
+
+    os.utime(other, (300, 300))
+    resume, initial = train.select_training_start(
+        current_path,
+        tmp_path,
+        True,
+    )
+    assert resume is None
+    assert initial == other

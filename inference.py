@@ -8,7 +8,7 @@ from config import (
 )
 from generate import generate
 from model import TitusModel
-from tokenizer import format_chat_prompt, load_tokenizer
+from tokenizer import format_conversation_prompt, load_tokenizer
 
 
 def token_id(tokenizer, token):
@@ -47,9 +47,6 @@ def print_help():
     print('/reload      Load the newest snapshot')
     print('/info        Show snapshot information')
     print('/clear       Clear conversation history')
-    print('/direct      Use concise direct mode')
-    print('/reason      Use reasoning mode')
-    print('/thinking    Toggle displaying extracted thinking')
     print('/help        Show commands')
     print('/exit        Exit')
 
@@ -60,24 +57,18 @@ def main():
 
     tokenizer = load_tokenizer(local_only=True)
     model, snapshot, snapshot_path = load_latest_model()
-    mode = 'direct'
-    show_thinking = False
-    messages = [{
-        'role': 'system',
-        'content': INFERENCE_CONFIG['system_prompt'],
-    }]
-
+    messages = []
+    newline_token_id = token_id(tokenizer, '\n')
     stop_token_ids = [
         tokenizer.eos_token_id,
-        token_id(tokenizer, '<|im_end|>'),
-        token_id(tokenizer, '<|/final|>'),
+        newline_token_id,
     ]
 
     print_snapshot_info(snapshot, snapshot_path)
     print_help()
 
     while True:
-        user_text = input(f'[{mode}] You: ').strip()
+        user_text = input('[chat] You: ').strip()
         if not user_text:
             continue
 
@@ -93,26 +84,8 @@ def main():
             continue
 
         if user_text == '/clear':
-            messages = [{
-                'role': 'system',
-                'content': INFERENCE_CONFIG['system_prompt'],
-            }]
+            messages = []
             print('[+] Conversation cleared')
-            continue
-
-        if user_text == '/direct':
-            mode = 'direct'
-            print('[+] Direct mode enabled')
-            continue
-
-        if user_text == '/reason':
-            mode = 'reason'
-            print('[+] Reasoning mode enabled')
-            continue
-
-        if user_text == '/thinking':
-            show_thinking = not show_thinking
-            print(f'[+] Show thinking: {show_thinking}')
             continue
 
         if user_text == '/reload':
@@ -124,11 +97,8 @@ def main():
             print_snapshot_info(snapshot, snapshot_path)
             continue
 
-        messages.append({
-            'role': 'user',
-            'content': user_text,
-        })
-        prompt = format_chat_prompt(tokenizer, messages, mode)
+        messages.append(user_text)
+        prompt = format_conversation_prompt(messages)
         result = generate(
             model,
             tokenizer,
@@ -140,17 +110,11 @@ def main():
             repetition_penalty=GENERATION_CONFIG['repetition_penalty'],
             no_repeat_ngram_size=GENERATION_CONFIG['no_repeat_ngram_size'],
             stop_token_ids=stop_token_ids,
-            reasoning_token_budget=GENERATION_CONFIG['reasoning_token_budget'],
         )
 
-        if show_thinking and result['thinking']:
-            print(f'[thinking] {result["thinking"]}')
-
-        print(f'Titus: {result["final"]}')
-        messages.append({
-            'role': 'assistant',
-            'content': result['final'],
-        })
+        response = result['final'].split('\n', 1)[0].strip()
+        print(f'Titus: {response}')
+        messages.append(response)
 
 
 if __name__ == '__main__':

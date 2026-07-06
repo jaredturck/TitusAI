@@ -79,3 +79,18 @@ def format_chat_prompt(tokenizer, messages, mode='direct'):
         add_generation_prompt=True,
     )
     return f'{mode_token}\n{chat_text}'
+
+
+def format_conversation_prompt(messages):
+    contents = []
+
+    for message in messages:
+        if isinstance(message, dict):
+            content = message.get('content')
+        else:
+            content = message
+
+        if isinstance(content, str) and content.strip():
+            contents.append(content.strip())
+
+    return '\n'.join(contents) + '\n'

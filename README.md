@@ -1,6 +1,6 @@
 # TitusAI
 
-TitusAI is a readable, from-scratch PyTorch language model for studying a compact modern LLM from data preparation through pretraining, instruction tuning, and inference.
+TitusAI is a readable, from-scratch PyTorch language model for studying a compact modern LLM from data preparation through pretraining, conversational fine-tuning, and inference.
 
 ## Training workflow
 
@@ -65,25 +65,29 @@ python inference.py
 
 Use `/reload` to load the newest snapshot and `/info` to inspect it.
 
-### 7. Prepare instruction data
+### 7. Prepare conversation data
 
 ```bash
 python prepare_instructions.py
 ```
 
-Progress is printed about every five seconds with processed conversations, percentage, speed, elapsed time, and ETA. Output is written under `data/processed/instructions/`.
+This prepares a 50-million-token mixture of 80% SODA, 15% Topical-Chat, and 5% DailyDialog. Messages are joined with newlines, conversations end with the existing document-end token, and output is written under `data/processed/instructions/` without assistant-role prefixes or loss-mask files.
 
-### 8. Run instruction training
+Dataset licences are CC BY 4.0 for SODA, CDLA-Sharing 1.0 for Topical-Chat, and CC BY-NC-SA 4.0 for the upstream DailyDialog corpus. Review those terms before redistributing prepared data or using the resulting model commercially.
 
-The instruction mode is hard-coded in `TRAIN_CONFIGS['instruction']` inside `config.py`. A saved instruction checkpoint resumes first; otherwise training automatically starts from the newest snapshot under `weights/snapshots/pretrain/`.
+### 8. Run conversational fine-tuning
+
+The existing `instruction` command now runs the conversational fine-tune. It uses packed 2,048-token windows, full next-token loss, ordinary causal attention, a micro-batch of four per GPU, eight accumulation steps, and a 50-million-token schedule from `3e-5` to `3e-6`.
+
+A checkpoint under `weights/checkpoints/conversations_50m/` resumes the current run. When that folder is empty, Titus initializes model weights from the newest full checkpoint across all earlier runs, falling back to the newest snapshot only when no full checkpoint exists.
 
 ```bash
 CUDA_VISIBLE_DEVICES=0,1 PYTHONUNBUFFERED=1 torchrun --standalone --nproc_per_node=2 --max_restarts=0 train.py instruction
 ```
 
-Instruction checkpoints and snapshots are stored separately under `weights/checkpoints/instructions_50m/` and `weights/snapshots/instructions_50m/`.
+Conversation checkpoints and snapshots are stored under `weights/checkpoints/conversations_50m/` and `weights/snapshots/conversations_50m/`.
 
-### 9. Inspect the instruction-tuned model
+### 9. Inspect the conversational model
 
 Inference automatically loads the most recently modified snapshot from any run under `weights/snapshots/`:
 
@@ -105,17 +109,17 @@ python inference.py
 | Position encoding | RoPE |
 | Normalization | Pre-RMSNorm and QK-RMSNorm |
 
-Training uses BF16, PyTorch DistributedDataParallel, AdamW, gradient accumulation, resumable checkpoints, rolling inference snapshots, and assistant-only loss masking for instruction data.
+Training uses BF16, PyTorch DistributedDataParallel, AdamW, gradient accumulation, resumable checkpoints, and rolling inference snapshots. Conversational fine-tuning uses the same optimized causal-attention path as pretraining and calculates loss over every within-conversation token.
 
-The pretraining mixture is 80% DCLM, 12% SwallowCode-v2, 6% Nemotron-CC-Math, and 2% Cosmopedia v2.
+The pretraining mixture is 80% DCLM, 12% SwallowCode-v2, 6% Nemotron-CC-Math, and 2% Cosmopedia v2. The conversational fine-tune is 80% SODA, 15% Topical-Chat, and 5% DailyDialog.
 
 ## Key files
 
 ```text
 config.py                Model, data, training-mode, and inference settings
 prepare_data.py          Resumable pretraining-data preparation
-prepare_instructions.py  Instruction-data preparation and progress reporting
-train.py                 Pretraining and instruction training
+prepare_instructions.py  Conversational-data preparation and progress reporting
+train.py                 Pretraining and conversational fine-tuning
 notifications.py         Discord notifications and GPU telemetry
 model.py                 Transformer architecture
 checkpoint.py            Snapshots and resumable checkpoints

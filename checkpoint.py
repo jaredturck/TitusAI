@@ -6,10 +6,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
-
 def unwrap_model(model):
     return model.module if hasattr(model, 'module') else model
-
 
 def state_dict_to_cpu(model, dtype=None):
     state_dict = {}
@@ -20,14 +18,12 @@ def state_dict_to_cpu(model, dtype=None):
         state_dict[name] = tensor
     return state_dict
 
-
 def atomic_torch_save(data, path):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = Path(f'{path}.writing')
     torch.save(data, temporary_path)
     os.replace(temporary_path, path)
-
 
 def select_snapshot_path(snapshot_path, keep):
     snapshot_path = Path(snapshot_path)
@@ -39,7 +35,6 @@ def select_snapshot_path(snapshot_path, keep):
             return candidate
 
     return min(candidates, key=lambda path: path.stat().st_mtime)
-
 
 def save_inference_snapshot(model, model_config, tokenizer_metadata, snapshot_path, keep, global_step, tokens_seen, validation_loss=None):
     destination = select_snapshot_path(snapshot_path, keep)
@@ -56,7 +51,6 @@ def save_inference_snapshot(model, model_config, tokenizer_metadata, snapshot_pa
     atomic_torch_save(snapshot, destination)
     return destination
 
-
 def find_latest_snapshot(snapshot_path):
     snapshot_path = Path(snapshot_path)
     snapshots = list(snapshot_path.rglob('snapshot_*.pt'))
@@ -64,7 +58,6 @@ def find_latest_snapshot(snapshot_path):
     if not snapshots:
         return None
     return max(snapshots, key=os.path.getmtime)
-
 
 def capture_rng_state():
     state = {
@@ -76,7 +69,6 @@ def capture_rng_state():
         state['cuda'] = torch.cuda.get_rng_state_all()
     return state
 
-
 def restore_rng_state(state):
     if state is None:
         return
@@ -85,7 +77,6 @@ def restore_rng_state(state):
     torch.set_rng_state(state['torch'])
     if torch.cuda.is_available() and 'cuda' in state:
         torch.cuda.set_rng_state_all(state['cuda'])
-
 
 def save_training_checkpoint(model, optimizer, scheduler, model_config, train_config, checkpoint_path, keep, global_step, tokens_seen, best_validation_loss, epoch, samples_seen_in_epoch, rng_states=None):
     checkpoint_path = Path(checkpoint_path)
@@ -117,7 +108,6 @@ def save_training_checkpoint(model, optimizer, scheduler, model_config, train_co
 
     return destination
 
-
 def find_latest_checkpoint(checkpoint_path):
     checkpoint_path = Path(checkpoint_path)
     checkpoints = list(checkpoint_path.glob('checkpoint_*.pt'))
@@ -126,6 +116,16 @@ def find_latest_checkpoint(checkpoint_path):
         return None
     return max(checkpoints, key=lambda path: path.stat().st_mtime)
 
+def find_latest_checkpoint_recursive(checkpoint_path):
+    checkpoint_path = Path(checkpoint_path)
+    checkpoints = list(checkpoint_path.rglob('checkpoint_*.pt'))
+    checkpoints = [
+        path for path in checkpoints
+        if not path.name.endswith('.writing')
+    ]
+    if not checkpoints:
+        return None
+    return max(checkpoints, key=os.path.getmtime)
 
 def load_training_checkpoint(path, model, optimizer=None, scheduler=None, rank=0):
     checkpoint = torch.load(path, map_location='cpu', weights_only=False)
@@ -144,7 +144,6 @@ def load_training_checkpoint(path, model, optimizer=None, scheduler=None, rank=0
         restore_rng_state(rng_states)
 
     return checkpoint
-
 
 def load_snapshot(path, model):
     snapshot = torch.load(path, map_location='cpu', weights_only=False)

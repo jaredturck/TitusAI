@@ -3,6 +3,7 @@ import os
 import torch
 
 from checkpoint import (
+    find_latest_checkpoint_recursive,
     find_latest_snapshot,
     load_snapshot,
     save_inference_snapshot,
@@ -116,3 +117,16 @@ def test_training_checkpoint_round_trip(tmp_path, tiny_config):
     assert checkpoint['samples_seen_in_epoch'] == 123
     for first, second in zip(first_model.parameters(), second_model.parameters()):
         assert torch.equal(first, second)
+
+
+def test_find_latest_checkpoint_recursively(tmp_path):
+    old_checkpoint = tmp_path / 'pretrain' / 'checkpoint_000000100.pt'
+    new_checkpoint = tmp_path / 'conversations_50m' / 'checkpoint_000000020.pt'
+    old_checkpoint.parent.mkdir()
+    new_checkpoint.parent.mkdir()
+    old_checkpoint.touch()
+    new_checkpoint.touch()
+    os.utime(old_checkpoint, (100, 100))
+    os.utime(new_checkpoint, (200, 200))
+
+    assert find_latest_checkpoint_recursive(tmp_path) == new_checkpoint

@@ -63,7 +63,7 @@ The training mode is mandatory. Press `Ctrl+C` once to save safely, then run the
 python inference.py
 ```
 
-Use `/reload` to load the newest snapshot and `/info` to inspect it.
+Use `/reload` to load the newest snapshot, `/load` to select any available snapshot, and `/info` to inspect the currently loaded snapshot.
 
 ### 7. Prepare conversation data
 
@@ -89,7 +89,7 @@ Conversation checkpoints and snapshots are stored under `weights/checkpoints/con
 
 ### 9. Inspect the conversational model
 
-Inference automatically loads the most recently modified snapshot from any run under `weights/snapshots/`:
+Inference automatically loads the most recently modified snapshot from any run under `weights/snapshots/`. Use `/load` inside the chat to list every snapshot, select one by number, and clear the current conversation before testing it:
 
 ```bash
 python inference.py
@@ -145,6 +145,23 @@ sudo --preserve-env=DISPLAY,WAYLAND_DISPLAY,XDG_RUNTIME_DIR,DBUS_SESSION_BUS_ADD
     -a '[fan:3]/GPUTargetFanSpeed=100'
 ```
 Set fan speed back to auto
+```bash
+sudo --preserve-env=DISPLAY,WAYLAND_DISPLAY,XDG_RUNTIME_DIR,DBUS_SESSION_BUS_ADDRESS \
+    nvidia-settings -c wayland-0 \
+    -a '[gpu:0]/GPUFanControlState=0' \
+    -a '[gpu:1]/GPUFanControlState=0'
+```
+
+Start training:
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 PYTHONUNBUFFERED=1 torchrun --standalone --nproc_per_node=2 --max_restarts=0 train.py pretrain
+```
+
+The power and fan settings normally reset after reboot or an NVIDIA driver/session restart.
+
+Restore automatic fan control:
+
 ```bash
 sudo --preserve-env=DISPLAY,WAYLAND_DISPLAY,XDG_RUNTIME_DIR,DBUS_SESSION_BUS_ADDRESS \
     nvidia-settings -c wayland-0 \

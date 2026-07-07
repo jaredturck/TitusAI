@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.14
+
+- Add an interactive `/load` command that lists every inference snapshot newest-first and loads a selected entry by number.
+- Show each snapshot's run-relative path, filesystem modification time, and current-selection marker without reading every model file into memory.
+- Clear conversation history after switching snapshots so comparisons start from a clean context while preserving `/reload` for the newest snapshot.
+
 ## 1.0.13
 
 - Simplify conversational fine-tuning to a 50-million-token mixture of 90% SODA and 10% DailyDialog, loaded through the standard Hugging Face datasets streaming path.

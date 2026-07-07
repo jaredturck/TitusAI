@@ -51,13 +51,17 @@ def save_inference_snapshot(model, model_config, tokenizer_metadata, snapshot_pa
     atomic_torch_save(snapshot, destination)
     return destination
 
-def find_latest_snapshot(snapshot_path):
+def find_snapshots(snapshot_path):
     snapshot_path = Path(snapshot_path)
     snapshots = list(snapshot_path.rglob('snapshot_*.pt'))
     snapshots = [path for path in snapshots if not path.name.endswith('.writing')]
+    return sorted(snapshots, key=os.path.getmtime, reverse=True)
+
+def find_latest_snapshot(snapshot_path):
+    snapshots = find_snapshots(snapshot_path)
     if not snapshots:
         return None
-    return max(snapshots, key=os.path.getmtime)
+    return snapshots[0]
 
 def capture_rng_state():
     state = {

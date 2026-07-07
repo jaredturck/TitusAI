@@ -5,6 +5,7 @@ import torch
 from checkpoint import (
     find_latest_checkpoint_recursive,
     find_latest_snapshot,
+    find_snapshots,
     load_snapshot,
     save_inference_snapshot,
 )
@@ -45,6 +46,22 @@ def test_find_latest_snapshot_recursively(tmp_path):
     os.utime(new_snapshot, (200, 200))
 
     assert find_latest_snapshot(tmp_path) == new_snapshot
+
+
+def test_find_snapshots_newest_first(tmp_path):
+    oldest = tmp_path / 'pretrain' / 'snapshot_09.pt'
+    middle = tmp_path / 'instructions_50m' / 'snapshot_06.pt'
+    newest = tmp_path / 'conversations_50m' / 'snapshot_02.pt'
+
+    for path in (oldest, middle, newest):
+        path.parent.mkdir(exist_ok=True)
+        path.touch()
+
+    os.utime(oldest, (100, 100))
+    os.utime(middle, (200, 200))
+    os.utime(newest, (300, 300))
+
+    assert find_snapshots(tmp_path) == [newest, middle, oldest]
 
 
 def test_snapshot_round_trip(tmp_path, tiny_config):

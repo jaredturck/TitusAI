@@ -1,6 +1,8 @@
+import datetime
+
 import torch
 
-from checkpoint import find_latest_snapshot
+from checkpoint import find_latest_snapshot, find_snapshots
 from config import (
     GENERATION_CONFIG,
     INFERENCE_CONFIG,
@@ -18,10 +20,7 @@ def token_id(tokenizer, token):
     return None
 
 
-def load_latest_model():
-    snapshot_path = find_latest_snapshot(SNAPSHOT_PATH)
-    assert snapshot_path is not None, 'No inference snapshots were found'
-
+def load_model(snapshot_path):
     snapshot_data = torch.load(
         snapshot_path,
         map_location='cpu',
@@ -35,6 +34,12 @@ def load_latest_model():
     return model, snapshot_data, snapshot_path
 
 
+def load_latest_model():
+    snapshot_path = find_latest_snapshot(SNAPSHOT_PATH)
+    assert snapshot_path is not None, 'No inference snapshots were found'
+    return load_model(snapshot_path)
+
+
 def print_snapshot_info(snapshot, snapshot_path):
     print(f'[+] Loaded: {snapshot_path.relative_to(SNAPSHOT_PATH)}')
     print(f'[+] Step: {snapshot.get("global_step", 0):,}')
@@ -43,8 +48,41 @@ def print_snapshot_info(snapshot, snapshot_path):
     print(f'[+] Saved: {snapshot.get("saved_at")}')
 
 
+def select_snapshot(current_path):
+    snapshot_paths = find_snapshots(SNAPSHOT_PATH)
+    if not snapshot_paths:
+        print('[-] No inference snapshots were found')
+        return None
+
+    print('[+] Available snapshots (newest first):')
+    for index, path in enumerate(snapshot_paths, start=1):
+        modified = datetime.datetime.fromtimestamp(
+            path.stat().st_mtime,
+        ).astimezone().strftime('%Y-%m-%d %H:%M:%S')
+        current = ' [current]' if path == current_path else ''
+        relative_path = path.relative_to(SNAPSHOT_PATH)
+        print(f'    {index:>2}. {relative_path}  {modified}{current}')
+
+    selection = input('Select snapshot number, or press Enter to cancel: ').strip()
+    if not selection:
+        print('[+] Snapshot selection cancelled')
+        return None
+
+    if not selection.isdigit():
+        print('[-] Invalid snapshot selection')
+        return None
+
+    selected_index = int(selection) - 1
+    if selected_index < 0 or selected_index >= len(snapshot_paths):
+        print('[-] Invalid snapshot selection')
+        return None
+
+    return snapshot_paths[selected_index]
+
+
 def print_help():
     print('/reload      Load the newest snapshot')
+    print('/load        Select a specific snapshot')
     print('/info        Show snapshot information')
     print('/clear       Clear conversation history')
     print('/help        Show commands')
@@ -85,6 +123,19 @@ def main():
 
         if user_text == '/clear':
             messages = []
+            print('[+] Conversation cleared')
+            continue
+
+        if user_text == '/load':
+            selected_path = select_snapshot(snapshot_path)
+            if selected_path is None:
+                continue
+            if selected_path == snapshot_path:
+                print('[+] Already using that snapshot')
+                continue
+            model, snapshot, snapshot_path = load_model(selected_path)
+            messages = []
+            print_snapshot_info(snapshot, snapshot_path)
             print('[+] Conversation cleared')
             continue
 

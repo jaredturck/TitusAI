@@ -4,6 +4,7 @@ from pathlib import Path
 
 import torch
 from datasets import load_dataset
+from tqdm import tqdm
 from transformers import AutoTokenizer
 
 WEIGHTS_PATH = Path('weights')
@@ -19,7 +20,7 @@ dataset = load_dataset(DATASET_NAME, DATASET_CONFIG, split='train')
 tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_NAME)
 chunks = []
 
-for start in range(0, len(dataset), CHUNK_SIZE):
+for start in tqdm(range(0, len(dataset), CHUNK_SIZE), desc='Tokenizing', unit='chunks'):
     texts = dataset[start:start + CHUNK_SIZE]['text']
     text = '\n\n'.join(text for text in texts if text.strip()) + '\n\n'
 

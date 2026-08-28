@@ -1,15 +1,4 @@
+.venv/
 __pycache__/
 .pytest_cache/
-*.pyc
-.venv/
-data/deduplication.sqlite3*
-data/processed/*
-!data/processed/.gitkeep
-weights/checkpoints/*
-!weights/checkpoints/.gitkeep
-weights/snapshots/*
-!weights/snapshots/.gitkeep
-tokenizer_files/
-logs/
-*.zip
-.env
+weights/*.pt

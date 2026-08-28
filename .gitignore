@@ -12,3 +12,4 @@ weights/snapshots/*
 tokenizer_files/
 logs/
 *.zip
+.env

@@ -1,18 +1,26 @@
+''' Download and tokenize the training dataset. '''
+
 from pathlib import Path
 
 import torch
 from datasets import load_dataset
 from transformers import AutoTokenizer
 
+WEIGHTS_PATH = Path('weights')
+DATA_PATH = WEIGHTS_PATH / 'data.pt'
+DATASET_NAME = 'Salesforce/wikitext'
+DATASET_CONFIG = 'wikitext-103-raw-v1'
+TOKENIZER_NAME = 'gpt2'
+CHUNK_SIZE = 1000
 
-Path('weights').mkdir(exist_ok=True)
+WEIGHTS_PATH.mkdir(exist_ok=True)
 
-dataset = load_dataset('Salesforce/wikitext', 'wikitext-103-raw-v1', split='train')
-tokenizer = AutoTokenizer.from_pretrained('gpt2')
+dataset = load_dataset(DATASET_NAME, DATASET_CONFIG, split='train')
+tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_NAME)
 chunks = []
 
-for start in range(0, len(dataset), 1000):
-    texts = dataset[start:start + 1000]['text']
+for start in range(0, len(dataset), CHUNK_SIZE):
+    texts = dataset[start:start + CHUNK_SIZE]['text']
     text = '\n\n'.join(text for text in texts if text.strip()) + '\n\n'
 
     if not text.strip():
@@ -22,5 +30,5 @@ for start in range(0, len(dataset), 1000):
     chunks.append(tokens.to(torch.int32))
 
 tokens = torch.cat(chunks)
-torch.save(tokens, 'weights/data.pt')
-print(f'Saved {len(tokens):,} tokens to weights/data.pt')
+torch.save(tokens, DATA_PATH)
+print(f'Saved {len(tokens):,} tokens to {DATA_PATH}')

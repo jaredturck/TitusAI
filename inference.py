@@ -1,21 +1,26 @@
+''' Generate text from the trained language model. '''
+
 import torch
 from transformers import AutoTokenizer
 
-from model import LanguageModel, context_length
+from model import CONTEXT_LENGTH, LanguageModel
 
+DEVICE = 'cuda'
+MODEL_PATH = 'weights/model.pt'
+TOKENIZER_NAME = 'gpt2'
+PROMPT = 'The meaning of life is'
+MAX_NEW_TOKENS = 100
 
-device = 'cuda'
-tokenizer = AutoTokenizer.from_pretrained('gpt2')
-model = LanguageModel().to(device)
-model.load_state_dict(torch.load('weights/model.pt', map_location=device))
+tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_NAME)
+model = LanguageModel().to(DEVICE)
+model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
 model.eval()
 
-prompt = 'The meaning of life is'
-tokens = tokenizer(prompt, return_tensors='pt')['input_ids'].to(device)
+tokens = tokenizer(PROMPT, return_tensors='pt')['input_ids'].to(DEVICE)
 
 with torch.no_grad():
-    for _ in range(100):
-        logits = model(tokens[:, -context_length:])
+    for _ in range(MAX_NEW_TOKENS):
+        logits = model(tokens[:, -CONTEXT_LENGTH:])
         next_token = logits[:, -1].argmax(dim=-1, keepdim=True)
         tokens = torch.cat((tokens, next_token), dim=1)
 

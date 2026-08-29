@@ -133,5 +133,8 @@ class DataPreparer:
             self.prepare_posttrain()
 
 if __name__ == '__main__':
-    preparer = DataPreparer(sys.argv[1])
-    preparer.prepare()
+    stages = ('pretrain', 'posttrain') if sys.argv[1] == 'all' else (sys.argv[1],)
+
+    for stage in stages:
+        preparer = DataPreparer(stage)
+        preparer.prepare()

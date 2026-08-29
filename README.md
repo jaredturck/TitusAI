@@ -36,9 +36,10 @@ pip install -r requirements.txt
 ```bash
 python prepare_data.py pretrain
 python prepare_data.py posttrain
+python prepare_data.py all
 ```
 
-`pretrain` prepares WikiText-103 as a packed token stream. `posttrain` prepares OpenThoughts-114k reasoning samples and the assistant loss mask used during post-training.
+`pretrain` prepares WikiText-103, `posttrain` prepares OpenThoughts-114k reasoning data, and `all` prepares both in sequence.
 
 ## Train
 

@@ -48,7 +48,9 @@ class Trainer:
 
     def setup_distributed(self):
         ''' Initialize distributed GPU training. '''
-        dist.init_process_group(backend='nccl')
+        if not dist.is_initialized():
+            dist.init_process_group(backend='nccl')
+
         self.local_rank = int(os.environ['LOCAL_RANK'])
         torch.cuda.set_device(self.local_rank)
         self.device = torch.device('cuda', self.local_rank)
@@ -144,8 +146,14 @@ class Trainer:
         if self.rank == 0:
             self.save()
 
-        dist.destroy_process_group()
+        dist.barrier()
 
 if __name__ == '__main__':
-    trainer = Trainer(sys.argv[1])
-    trainer.train()
+    stages = ('pretrain', 'posttrain') if sys.argv[1] == 'all' else (sys.argv[1],)
+
+    for stage in stages:
+        trainer = Trainer(stage)
+        trainer.train()
+        del trainer
+
+    dist.destroy_process_group()

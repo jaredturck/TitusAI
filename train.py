@@ -148,7 +148,7 @@ class Trainer:
                         self.recent_losses = self.recent_losses[-5:]
                         average_loss = sum(self.recent_losses) / len(self.recent_losses)
                         eta = int((len(self.loader) - step) * (now - self.last_print) / (step - self.last_print_step))
-                        print(f'epoch {epoch + 1} step {step:,} loss {loss_value:.4f} ({average_loss:.4f}) lr {self.scheduler.get_last_lr()[0]:.2e} eta {eta // 3600}h {(eta % 3600) // 60}m')
+                        print(f'epoch {epoch + 1} step {step:,} loss {loss_value:.4f} ({average_loss:.2f}) lr {self.scheduler.get_last_lr()[0]:.2e} eta {eta // 3600}h {(eta % 3600) // 60}m')
                         self.last_print = now
                         self.last_print_step = step
 

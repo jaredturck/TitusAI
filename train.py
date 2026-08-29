@@ -146,12 +146,13 @@ class Trainer:
                         loss_value = loss.item()
                         self.recent_losses.append(loss_value)
                         self.recent_losses = self.recent_losses[-5:]
+                        average_loss = sum(self.recent_losses) / len(self.recent_losses)
                         eta = int((len(self.loader) - step) * (now - self.last_print) / (step - self.last_print_step))
-                        print(f'epoch {epoch + 1} step {step:,} loss {loss_value:.4f} lr {self.scheduler.get_last_lr()[0]:.2e} eta {eta // 3600}h {(eta % 3600) // 60}m')
+                        print(f'epoch {epoch + 1} step {step:,} loss {loss_value:.4f} ({average_loss:.4f}) lr {self.scheduler.get_last_lr()[0]:.2e} eta {eta // 3600}h {(eta % 3600) // 60}m')
                         self.last_print = now
                         self.last_print_step = step
 
-                        if len(self.recent_losses) == 5 and sum(self.recent_losses) / 5 < STOP_LOSS:
+                        if len(self.recent_losses) == 5 and average_loss < STOP_LOSS:
                             self.stop.fill_(1)
 
                         if now - self.last_save >= 600:

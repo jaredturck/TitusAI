@@ -1,6 +1,7 @@
 ''' Train the language model on two CUDA GPUs. '''
 
 import os
+import time
 from pathlib import Path
 
 import torch
@@ -15,10 +16,21 @@ from model import LanguageModel
 DATA_PATH = Path('weights/data.bin')
 MODEL_PATH = Path('weights/model.pt')
 CONTEXT_LENGTH = 256
-BATCH_SIZE = 4
+BATCH_SIZE = 32
 LEARNING_RATE = 3e-4
 WARMUP_STEPS = 100
 EPOCHS = 1
+
+def save(model):
+    ''' Save model weights while keeping three checkpoints. '''
+    models = sorted(MODEL_PATH.parent.glob('model_*.pt'), key=lambda path: path.stat().st_mtime)
+
+    if len(models) < 3:
+        path = MODEL_PATH.parent / f'model_{len(models) + 1}.pt'
+    else:
+        path = models[0]
+
+    torch.save(model.module.state_dict(), path)
 
 dist.init_process_group(backend='nccl')
 local_rank = int(os.environ['LOCAL_RANK'])
@@ -44,6 +56,9 @@ if rank == 0:
     print(f'Parameters: {sum(parameter.numel() for parameter in model.parameters()):,}')
     print(f'Training samples: {len(sequences):,}')
 
+last_print = time.monotonic()
+last_save = last_print
+
 for epoch in range(EPOCHS):
     sampler.set_epoch(epoch)
 
@@ -60,10 +75,17 @@ for epoch in range(EPOCHS):
         optimizer.step()
         scheduler.step()
 
-        if rank == 0 and step % 100 == 0:
+        now = time.monotonic()
+
+        if rank == 0 and now - last_print >= 20:
             print(f'epoch {epoch + 1} step {step:,} loss {loss.item():.4f} lr {scheduler.get_last_lr()[0]:.2e}')
+            last_print = now
+
+        if rank == 0 and now - last_save >= 600:
+            save(model)
+            last_save = now
 
 if rank == 0:
-    torch.save(model.module.state_dict(), MODEL_PATH)
+    save(model)
 
 dist.destroy_process_group()

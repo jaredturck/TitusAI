@@ -21,71 +21,92 @@ LEARNING_RATE = 3e-4
 WARMUP_STEPS = 100
 EPOCHS = 1
 
-def save(model):
-    ''' Save model weights while keeping three checkpoints. '''
-    models = sorted(MODEL_PATH.parent.glob('model_*.pt'), key=lambda path: path.stat().st_mtime)
+class Trainer:
+    ''' Train the language model across two CUDA GPUs. '''
 
-    if len(models) < 3:
-        path = MODEL_PATH.parent / f'model_{len(models) + 1}.pt'
-    else:
-        path = models[0]
+    def __init__(self):
+        ''' Initialize the trainer. '''
+        self.setup_distributed()
+        self.setup_data()
+        self.setup_training()
 
-    torch.save(model.module.state_dict(), path)
+        if self.rank == 0:
+            print(f'Parameters: {sum(parameter.numel() for parameter in self.model.parameters()):,}')
+            print(f'Training samples: {len(self.sequences):,}')
 
-dist.init_process_group(backend='nccl')
-local_rank = int(os.environ['LOCAL_RANK'])
-torch.cuda.set_device(local_rank)
-device = torch.device('cuda', local_rank)
-rank = dist.get_rank()
+        self.last_print = time.monotonic()
+        self.last_save = self.last_print
 
-tokens = torch.from_file(str(DATA_PATH), shared=False, size=DATA_PATH.stat().st_size // 2, dtype=torch.uint16)
-sequences = tokens.unfold(0, CONTEXT_LENGTH + 1, CONTEXT_LENGTH)
-sampler = DistributedSampler(sequences, shuffle=True, drop_last=True)
-loader = DataLoader(sequences, batch_size=BATCH_SIZE, sampler=sampler)
+    def setup_distributed(self):
+        ''' Initialize distributed GPU training. '''
+        dist.init_process_group(backend='nccl')
+        self.local_rank = int(os.environ['LOCAL_RANK'])
+        torch.cuda.set_device(self.local_rank)
+        self.device = torch.device('cuda', self.local_rank)
+        self.rank = dist.get_rank()
 
-model = DistributedDataParallel(LanguageModel().to(device), device_ids=[local_rank])
-optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE)
-loss_function = nn.CrossEntropyLoss()
+    def setup_data(self):
+        ''' Load and distribute packed training samples. '''
+        self.tokens = torch.from_file(str(DATA_PATH), shared=False, size=DATA_PATH.stat().st_size // 2, dtype=torch.uint16)
+        self.sequences = self.tokens.unfold(0, CONTEXT_LENGTH + 1, CONTEXT_LENGTH)
+        self.sampler = DistributedSampler(self.sequences, shuffle=True, drop_last=True)
+        self.loader = DataLoader(self.sequences, batch_size=BATCH_SIZE, sampler=self.sampler)
 
-total_steps = len(loader) * EPOCHS
-warmup = LinearLR(optimizer, start_factor=0.1, end_factor=1.0, total_iters=WARMUP_STEPS)
-decay = CosineAnnealingLR(optimizer, T_max=total_steps - WARMUP_STEPS, eta_min=LEARNING_RATE * 0.1)
-scheduler = SequentialLR(optimizer, schedulers=[warmup, decay], milestones=[WARMUP_STEPS])
+    def setup_training(self):
+        ''' Build the model, optimizer, loss, and learning-rate schedule. '''
+        self.model = DistributedDataParallel(LanguageModel().to(self.device), device_ids=[self.local_rank])
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=LEARNING_RATE)
+        self.loss_function = nn.CrossEntropyLoss()
 
-if rank == 0:
-    print(f'Parameters: {sum(parameter.numel() for parameter in model.parameters()):,}')
-    print(f'Training samples: {len(sequences):,}')
+        total_steps = len(self.loader) * EPOCHS
+        warmup = LinearLR(self.optimizer, start_factor=0.1, end_factor=1.0, total_iters=WARMUP_STEPS)
+        decay = CosineAnnealingLR(self.optimizer, T_max=total_steps - WARMUP_STEPS, eta_min=LEARNING_RATE * 0.1)
+        self.scheduler = SequentialLR(self.optimizer, schedulers=[warmup, decay], milestones=[WARMUP_STEPS])
 
-last_print = time.monotonic()
-last_save = last_print
+    def save(self):
+        ''' Save model weights while keeping three checkpoints. '''
+        models = sorted(MODEL_PATH.parent.glob('model_*.pt'), key=lambda path: path.stat().st_mtime)
 
-for epoch in range(EPOCHS):
-    sampler.set_epoch(epoch)
+        if len(models) < 3:
+            path = MODEL_PATH.parent / f'model_{len(models) + 1}.pt'
+        else:
+            path = models[0]
 
-    for step, batch in enumerate(loader):
-        batch = batch.to(device=device, dtype=torch.long)
-        inputs = batch[:, :-1]
-        targets = batch[:, 1:]
+        torch.save(self.model.module.state_dict(), path)
 
-        logits = model(inputs)
-        loss = loss_function(logits.reshape(-1, logits.shape[-1]), targets.reshape(-1))
+    def train(self):
+        ''' Train the language model. '''
+        for epoch in range(EPOCHS):
+            self.sampler.set_epoch(epoch)
 
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        scheduler.step()
+            for step, batch in enumerate(self.loader):
+                batch = batch.to(device=self.device, dtype=torch.long)
+                inputs = batch[:, :-1]
+                targets = batch[:, 1:]
 
-        now = time.monotonic()
+                logits = self.model(inputs)
+                loss = self.loss_function(logits.reshape(-1, logits.shape[-1]), targets.reshape(-1))
 
-        if rank == 0 and now - last_print >= 20:
-            print(f'epoch {epoch + 1} step {step:,} loss {loss.item():.4f} lr {scheduler.get_last_lr()[0]:.2e}')
-            last_print = now
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
+                self.scheduler.step()
 
-        if rank == 0 and now - last_save >= 600:
-            save(model)
-            last_save = now
+                now = time.monotonic()
 
-if rank == 0:
-    save(model)
+                if self.rank == 0 and now - self.last_print >= 20:
+                    print(f'epoch {epoch + 1} step {step:,} loss {loss.item():.4f} lr {self.scheduler.get_last_lr()[0]:.2e}')
+                    self.last_print = now
 
-dist.destroy_process_group()
+                if self.rank == 0 and now - self.last_save >= 600:
+                    self.save()
+                    self.last_save = now
+
+        if self.rank == 0:
+            self.save()
+
+        dist.destroy_process_group()
+
+if __name__ == '__main__':
+    trainer = Trainer()
+    trainer.train()

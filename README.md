@@ -26,7 +26,7 @@ TitusAI is a deliberately small decoder-only language model built to keep the co
 - AdamW optimizer
 - Peak learning rate of `3e-4`
 - 100-step linear warmup followed by cosine decay to `3e-5`
-- One training epoch
+- One training epoch per stage
 - Progress printed every 20 seconds
 - Model weights saved every 10 minutes
 - Three rotating checkpoint files are retained for each training stage
@@ -78,15 +78,17 @@ weights/posttrain_mask.bin
 
 Prompt and padding tokens are masked out so only the assistant reasoning and answer contribute to the post-training loss.
 
-## Pretrain
+## Train
 
 Training requires two CUDA GPUs and is launched with `torchrun`:
 
 ```bash
 torchrun --standalone --nproc-per-node=2 train.py pretrain
+torchrun --standalone --nproc-per-node=2 train.py posttrain
+torchrun --standalone --nproc-per-node=2 train.py all
 ```
 
-Pretraining memory-maps the WikiText stream and creates 257-token samples with a stride of 256. Samples are shuffled and divided between the two distributed workers.
+Pretraining memory-maps the WikiText stream and creates 257-token samples with a stride of 256. Post-training initializes from the newest pretraining checkpoint and trains on the masked OpenThoughts reasoning samples. The `all` mode runs pretraining first and post-training second in the same launch.
 
 Pretraining checkpoints rotate between:
 
@@ -95,16 +97,6 @@ weights/model_1.pt
 weights/model_2.pt
 weights/model_3.pt
 ```
-
-## Post-train
-
-After pretraining and preparing the reasoning dataset, run:
-
-```bash
-torchrun --standalone --nproc-per-node=2 train.py posttrain
-```
-
-Post-training initializes the model from the newest `model_*.pt` pretraining checkpoint. The same distributed training loop is used, with the assistant mask applied to cross-entropy targets.
 
 Post-training checkpoints rotate between:
 

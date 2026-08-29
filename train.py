@@ -134,17 +134,18 @@ class Trainer:
                 self.optimizer.step()
                 self.scheduler.step()
 
-                now = time.monotonic()
+                if self.rank == 0:
+                    now = time.monotonic()
 
-                if self.rank == 0 and now - self.last_print >= 20:
-                    eta = int((len(self.loader) - step) * (now - self.last_print) / (step - self.last_print_step))
-                    print(f'epoch {epoch + 1} step {step:,} loss {loss.item():.4f} lr {self.scheduler.get_last_lr()[0]:.2e} eta {eta // 3600}h {(eta % 3600) // 60}m')
-                    self.last_print = now
-                    self.last_print_step = step
+                    if now - self.last_print >= 20:
+                        eta = int((len(self.loader) - step) * (now - self.last_print) / (step - self.last_print_step))
+                        print(f'epoch {epoch + 1} step {step:,} loss {loss.item():.4f} lr {self.scheduler.get_last_lr()[0]:.2e} eta {eta // 3600}h {(eta % 3600) // 60}m')
+                        self.last_print = now
+                        self.last_print_step = step
 
-                if self.rank == 0 and now - self.last_save >= 600:
-                    self.save()
-                    self.last_save = now
+                        if now - self.last_save >= 600:
+                            self.save()
+                            self.last_save = now
 
         if self.rank == 0:
             self.save()

@@ -44,6 +44,7 @@ class Trainer:
             print(f'Training samples: {len(self.dataset):,}')
 
         self.last_print = time.monotonic()
+        self.last_print_step = 0
         self.last_save = self.last_print
 
     def setup_distributed(self):
@@ -136,8 +137,10 @@ class Trainer:
                 now = time.monotonic()
 
                 if self.rank == 0 and now - self.last_print >= 20:
-                    print(f'epoch {epoch + 1} step {step:,} loss {loss.item():.4f} lr {self.scheduler.get_last_lr()[0]:.2e}')
+                    eta = int((len(self.loader) - step) * (now - self.last_print) / (step - self.last_print_step))
+                    print(f'epoch {epoch + 1} step {step:,} loss {loss.item():.4f} lr {self.scheduler.get_last_lr()[0]:.2e} eta {eta // 3600}h {(eta % 3600) // 60}m')
                     self.last_print = now
+                    self.last_print_step = step
 
                 if self.rank == 0 and now - self.last_save >= 600:
                     self.save()

@@ -53,4 +53,8 @@ torchrun --standalone --nproc-per-node=2 train.py all
 
 ## Inference
 
-`inference.py` is still a minimal placeholder and has not yet been updated for the current checkpoint workflow.
+```bash
+python inference.py
+```
+
+The inference script loads the newest post-training checkpoint and starts an interactive `user>` prompt. Type `exit` or `quit` to stop.

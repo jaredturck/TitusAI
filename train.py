@@ -24,6 +24,7 @@ BATCH_SIZE = 32
 LEARNING_RATE = 3e-4
 WARMUP_STEPS = 100
 EPOCHS = 1
+STOP_LOSS = 4.0
 
 class Trainer:
     ''' Train the language model across two CUDA GPUs. '''
@@ -46,6 +47,8 @@ class Trainer:
         self.last_print = time.monotonic()
         self.last_print_step = 0
         self.last_save = self.last_print
+        self.recent_losses = []
+        self.stop = torch.zeros(1, device=self.device, dtype=torch.uint8)
 
     def setup_distributed(self):
         ''' Initialize distributed GPU training. '''
@@ -75,13 +78,15 @@ class Trainer:
 
     def setup_training(self):
         ''' Build the model, optimizer, loss, and learning-rate schedule. '''
-        model = LanguageModel().to(self.device)
+        model = LanguageModel()
+        checkpoints = sorted(WEIGHTS_PATH.glob('*.pt'), key=lambda path: path.stat().st_mtime)
 
-        if self.stage == 'posttrain':
-            checkpoints = sorted(WEIGHTS_PATH.glob('model_*.pt'), key=lambda path: path.stat().st_mtime)
-            model.load_state_dict(torch.load(checkpoints[-1], map_location=self.device))
+        if checkpoints:
+            weights = torch.load(checkpoints[-1], map_location='cpu')
+            del weights['output.weight']
+            model.load_state_dict(weights, strict=False)
 
-        self.model = DistributedDataParallel(model, device_ids=[self.local_rank])
+        self.model = DistributedDataParallel(model.to(self.device), device_ids=[self.local_rank])
         self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=LEARNING_RATE)
         self.loss_function = nn.CrossEntropyLoss()
 
@@ -138,14 +143,26 @@ class Trainer:
                     now = time.monotonic()
 
                     if now - self.last_print >= 20:
+                        loss_value = loss.item()
+                        self.recent_losses.append(loss_value)
+                        self.recent_losses = self.recent_losses[-5:]
                         eta = int((len(self.loader) - step) * (now - self.last_print) / (step - self.last_print_step))
-                        print(f'epoch {epoch + 1} step {step:,} loss {loss.item():.4f} lr {self.scheduler.get_last_lr()[0]:.2e} eta {eta // 3600}h {(eta % 3600) // 60}m')
+                        print(f'epoch {epoch + 1} step {step:,} loss {loss_value:.4f} lr {self.scheduler.get_last_lr()[0]:.2e} eta {eta // 3600}h {(eta % 3600) // 60}m')
                         self.last_print = now
                         self.last_print_step = step
+
+                        if len(self.recent_losses) == 5 and sum(self.recent_losses) / 5 < STOP_LOSS:
+                            self.stop.fill_(1)
 
                         if now - self.last_save >= 600:
                             self.save()
                             self.last_save = now
+
+                if step % 100 == 0:
+                    dist.broadcast(self.stop, src=0)
+
+                    if self.stop.item():
+                        break
 
         if self.rank == 0:
             self.save()
@@ -157,7 +174,14 @@ if __name__ == '__main__':
 
     for stage in stages:
         trainer = Trainer(stage)
-        trainer.train()
+
+        try:
+            trainer.train()
+        except KeyboardInterrupt:
+            if trainer.rank == 0:
+                trainer.save()
+            break
+
         del trainer
 
     dist.destroy_process_group()

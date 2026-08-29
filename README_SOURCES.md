@@ -2,9 +2,9 @@
 
 **Synchronization requirement:** this file must mirror `model.py`. Any future edit to `model.py` must update this file in the same commit.
 
-The code below preserves every line of `model.py` in the same order. Every non-blank line is copied verbatim before its trailing source comment. Blank lines are preserved. Source 0 marks documentation or TitusAI-specific design choices rather than pretending those lines are dictated by external research.
+The code below preserves every line of `model.py` in the same order. Every non-blank line is copied verbatim before its trailing source comment. Blank lines are preserved. Source 0 marks TitusAI-specific design choices, including exact scale choices informed by cited research rather than pretending a paper dictates those exact values.
 
-`model.py` SHA-256: `690ca303e42900c3ab4b6d0cf213d2b35d320b8649595557e61e9fbb8daabbe3`
+`model.py` SHA-256: `4a91a02c8823351f4fd09ea67cb4f014250256a4c34fadab2bfbc0c9939ac115`
 
 ## Audited model mirror
 
@@ -64,17 +64,26 @@ class LanguageModel(nn.Module):  # Sources 1, 5 — PyTorch Module; decoder LM s
         ''' Build the language model. '''  # Source 0 — TitusAI documentation
         super().__init__()  # Source 1 — PyTorch Module
 
-        d_model = 256  # Source 0 — TitusAI model-width choice
+        d_model = 256  # Sources 0, 12 — TitusAI width choice; MobileLLM deep-thin small-model design
 
         self.token_embedding = nn.Embedding(50257, d_model)  # Sources 1, 10 — PyTorch Embedding; GPT-2 vocabulary
 
-        self.layer_1 = TransformerBlock(d_model)  # Source 0 — TitusAI four-layer choice
-        self.layer_2 = TransformerBlock(d_model)  # Source 0 — TitusAI four-layer choice
-        self.layer_3 = TransformerBlock(d_model)  # Source 0 — TitusAI four-layer choice
-        self.layer_4 = TransformerBlock(d_model)  # Source 0 — TitusAI four-layer choice
+        self.layer_1 = TransformerBlock(d_model)  # Sources 0, 12 — TitusAI twelve-layer choice; MobileLLM deep-thin design
+        self.layer_2 = TransformerBlock(d_model)  # Sources 0, 12 — TitusAI twelve-layer choice; MobileLLM deep-thin design
+        self.layer_3 = TransformerBlock(d_model)  # Sources 0, 12 — TitusAI twelve-layer choice; MobileLLM deep-thin design
+        self.layer_4 = TransformerBlock(d_model)  # Sources 0, 12 — TitusAI twelve-layer choice; MobileLLM deep-thin design
+        self.layer_5 = TransformerBlock(d_model)  # Sources 0, 12 — TitusAI twelve-layer choice; MobileLLM deep-thin design
+        self.layer_6 = TransformerBlock(d_model)  # Sources 0, 12 — TitusAI twelve-layer choice; MobileLLM deep-thin design
+        self.layer_7 = TransformerBlock(d_model)  # Sources 0, 12 — TitusAI twelve-layer choice; MobileLLM deep-thin design
+        self.layer_8 = TransformerBlock(d_model)  # Sources 0, 12 — TitusAI twelve-layer choice; MobileLLM deep-thin design
+        self.layer_9 = TransformerBlock(d_model)  # Sources 0, 12 — TitusAI twelve-layer choice; MobileLLM deep-thin design
+        self.layer_10 = TransformerBlock(d_model)  # Sources 0, 12 — TitusAI twelve-layer choice; MobileLLM deep-thin design
+        self.layer_11 = TransformerBlock(d_model)  # Sources 0, 12 — TitusAI twelve-layer choice; MobileLLM deep-thin design
+        self.layer_12 = TransformerBlock(d_model)  # Sources 0, 12 — TitusAI twelve-layer choice; MobileLLM deep-thin design
 
         self.norm = nn.RMSNorm(d_model, eps=1e-6)  # Sources 3, 5, 7 — Final RMSNorm precedent
-        self.output = nn.Linear(d_model, 50257, bias=False)  # Sources 1, 11 — PyTorch Linear; OLMo 2 untied LM head
+        self.output = nn.Linear(d_model, 50257, bias=False)  # Sources 1, 10 — PyTorch Linear; GPT-2 vocabulary
+        self.output.weight = self.token_embedding.weight  # Sources 1, 11, 12 — PyTorch parameter sharing; weight tying; MobileLLM embedding sharing
 
         self.register_buffer('rope_frequencies', 1.0 / (10000 ** (torch.arange(0, 64, 2).float() / 64)), persistent=False)  # Sources 1, 2, 5 — register_buffer; RoPE frequencies; Llama implementation
 
@@ -87,18 +96,26 @@ class LanguageModel(nn.Module):  # Sources 1, 5 — PyTorch Module; decoder LM s
         cos = frequencies.cos()  # Sources 2, 5 — RoPE cosine coefficients
         sin = frequencies.sin()  # Sources 2, 5 — RoPE sine coefficients
 
-        hidden = self.layer_1(hidden, cos, sin)  # Source 0 — Explicit TitusAI layer wiring
-        hidden = self.layer_2(hidden, cos, sin)  # Source 0 — Explicit TitusAI layer wiring
-        hidden = self.layer_3(hidden, cos, sin)  # Source 0 — Explicit TitusAI layer wiring
-        hidden = self.layer_4(hidden, cos, sin)  # Source 0 — Explicit TitusAI layer wiring
+        hidden = self.layer_1(hidden, cos, sin)  # Sources 0, 12 — Explicit TitusAI deep-thin layer wiring
+        hidden = self.layer_2(hidden, cos, sin)  # Sources 0, 12 — Explicit TitusAI deep-thin layer wiring
+        hidden = self.layer_3(hidden, cos, sin)  # Sources 0, 12 — Explicit TitusAI deep-thin layer wiring
+        hidden = self.layer_4(hidden, cos, sin)  # Sources 0, 12 — Explicit TitusAI deep-thin layer wiring
+        hidden = self.layer_5(hidden, cos, sin)  # Sources 0, 12 — Explicit TitusAI deep-thin layer wiring
+        hidden = self.layer_6(hidden, cos, sin)  # Sources 0, 12 — Explicit TitusAI deep-thin layer wiring
+        hidden = self.layer_7(hidden, cos, sin)  # Sources 0, 12 — Explicit TitusAI deep-thin layer wiring
+        hidden = self.layer_8(hidden, cos, sin)  # Sources 0, 12 — Explicit TitusAI deep-thin layer wiring
+        hidden = self.layer_9(hidden, cos, sin)  # Sources 0, 12 — Explicit TitusAI deep-thin layer wiring
+        hidden = self.layer_10(hidden, cos, sin)  # Sources 0, 12 — Explicit TitusAI deep-thin layer wiring
+        hidden = self.layer_11(hidden, cos, sin)  # Sources 0, 12 — Explicit TitusAI deep-thin layer wiring
+        hidden = self.layer_12(hidden, cos, sin)  # Sources 0, 12 — Explicit TitusAI deep-thin layer wiring
 
-        return self.output(self.norm(hidden))  # Sources 5, 11 — Final normalization and LM projection
+        return self.output(self.norm(hidden))  # Sources 5, 11 — Final normalization and tied vocabulary projection
 ```
 
 ## Sources
 
-- **Source 0 — TitusAI local design.** Project-specific documentation and deliberately chosen scale values such as `d_model = 256`, four explicit blocks, and the decision to keep those choices literal rather than configurable. This source exists to distinguish local choices from research-backed architectural mechanics.
-- **Source 1 — PyTorch 2.13 documentation.** Supports `nn.Module`, `nn.Embedding`, `nn.Linear`, `nn.RMSNorm`, tensor reshaping/dtype operations, `register_buffer`, `torch.arange`, `torch.outer`, and the standard `forward` module pattern. https://docs.pytorch.org/docs/stable/
+- **Source 0 — TitusAI local design.** Project-specific documentation and exact scale choices. The exact `d_model = 256` and twelve-layer operating point are TitusAI engineering choices informed by Source 12's deep-and-thin findings rather than values claimed directly by that paper.
+- **Source 1 — PyTorch 2.13 documentation.** Supports `nn.Module`, `nn.Embedding`, `nn.Linear`, `nn.RMSNorm`, tensor reshaping/dtype operations, parameter sharing by assigning the same `Parameter`, `register_buffer`, `torch.arange`, `torch.outer`, and the standard `forward` module pattern. https://docs.pytorch.org/docs/stable/
 - **Source 2 — RoFormer: Enhanced Transformer with Rotary Position Embedding.** Establishes RoPE, including rotating paired query/key coordinates with position-dependent sine and cosine terms. https://arxiv.org/abs/2104.09864
 - **Source 3 — Root Mean Square Layer Normalization.** Establishes RMSNorm as a normalization method without mean-centering. https://arxiv.org/abs/1910.07467
 - **Source 4 — GLU Variants Improve Transformer.** Establishes SwiGLU-style gated feed-forward layers using a SiLU/Swish gate multiplied by a second projected branch. https://arxiv.org/abs/2002.05202
@@ -108,4 +125,5 @@ class LanguageModel(nn.Module):  # Sources 1, 5 — PyTorch Module; decoder LM s
 - **Source 8 — vLLM Qwen3 implementation.** Demonstrates high-performance fused QKV projection and fused gate/up projection while preserving the same Q/K/V and SwiGLU mathematics. https://github.com/vllm-project/vllm/blob/main/vllm/model_executor/models/qwen3.py
 - **Source 9 — PyTorch scaled dot-product attention.** Defines the causal SDPA API used directly by the block. PyTorch documents automatic selection among supported attention backends, including FlashAttention-2 when inputs and hardware are eligible. https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html
 - **Source 10 — GPT-2 configuration.** Confirms the GPT-2 tokenizer/model vocabulary size of 50,257 used by TitusAI's tokenizer and embedding/output dimensions. https://huggingface.co/openai-community/gpt2/blob/main/config.json
-- **Source 11 — OLMo 2 1B configuration.** Provides a current production precedent for an untied language-model output head (`tie_word_embeddings: false`), bias-free attention, zero attention dropout, RMSNorm, RoPE, and SiLU. https://huggingface.co/allenai/OLMo-2-0425-1B/blob/main/config.json
+- **Source 11 — Using the Output Embedding to Improve Language Models.** Press and Wolf recommend tying the input embedding and output embedding in language models, reducing parameter count while maintaining or improving language-model quality. https://arxiv.org/abs/1608.05859
+- **Source 12 — MobileLLM: Optimizing Sub-billion Parameter Language Models for On-Device Use Cases.** ICML 2024 evidence that architecture matters strongly at small scale and that deep-and-thin transformers combined with embedding sharing are effective for sub-billion-parameter language models. https://proceedings.mlr.press/v235/liu24ce.html

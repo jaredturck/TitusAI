@@ -61,9 +61,18 @@ class LanguageModel(nn.Module):
         self.layer_2 = TransformerBlock(d_model)
         self.layer_3 = TransformerBlock(d_model)
         self.layer_4 = TransformerBlock(d_model)
+        self.layer_5 = TransformerBlock(d_model)
+        self.layer_6 = TransformerBlock(d_model)
+        self.layer_7 = TransformerBlock(d_model)
+        self.layer_8 = TransformerBlock(d_model)
+        self.layer_9 = TransformerBlock(d_model)
+        self.layer_10 = TransformerBlock(d_model)
+        self.layer_11 = TransformerBlock(d_model)
+        self.layer_12 = TransformerBlock(d_model)
 
         self.norm = nn.RMSNorm(d_model, eps=1e-6)
         self.output = nn.Linear(d_model, 50257, bias=False)
+        self.output.weight = self.token_embedding.weight
 
         self.register_buffer('rope_frequencies', 1.0 / (10000 ** (torch.arange(0, 64, 2).float() / 64)), persistent=False)
 
@@ -80,5 +89,13 @@ class LanguageModel(nn.Module):
         hidden = self.layer_2(hidden, cos, sin)
         hidden = self.layer_3(hidden, cos, sin)
         hidden = self.layer_4(hidden, cos, sin)
+        hidden = self.layer_5(hidden, cos, sin)
+        hidden = self.layer_6(hidden, cos, sin)
+        hidden = self.layer_7(hidden, cos, sin)
+        hidden = self.layer_8(hidden, cos, sin)
+        hidden = self.layer_9(hidden, cos, sin)
+        hidden = self.layer_10(hidden, cos, sin)
+        hidden = self.layer_11(hidden, cos, sin)
+        hidden = self.layer_12(hidden, cos, sin)
 
         return self.output(self.norm(hidden))

@@ -20,7 +20,8 @@ POSTTRAIN_DATA_PATH = WEIGHTS_PATH / 'posttrain.bin'
 POSTTRAIN_MASK_PATH = WEIGHTS_PATH / 'posttrain_mask.bin'
 PRETRAIN_CONTEXT_LENGTH = 256
 POSTTRAIN_CONTEXT_LENGTH = 1024
-BATCH_SIZE = 50
+PRETRAIN_BATCH_SIZE = 50
+POSTTRAIN_BATCH_SIZE = 12
 LEARNING_RATE = 3e-4
 WARMUP_STEPS = 100
 EPOCHS = 1
@@ -34,6 +35,7 @@ class Trainer:
         assert stage in ('pretrain', 'posttrain')
         self.stage = stage
         self.context_length = PRETRAIN_CONTEXT_LENGTH if stage == 'pretrain' else POSTTRAIN_CONTEXT_LENGTH
+        self.batch_size = PRETRAIN_BATCH_SIZE if stage == 'pretrain' else POSTTRAIN_BATCH_SIZE
         self.checkpoint_prefix = 'model' if stage == 'pretrain' else 'posttrain'
 
         self.setup_distributed()
@@ -74,7 +76,7 @@ class Trainer:
             self.dataset = TensorDataset(self.sequences, self.masks)
 
         self.sampler = DistributedSampler(self.dataset, shuffle=True, drop_last=True)
-        self.loader = DataLoader(self.dataset, batch_size=BATCH_SIZE, sampler=self.sampler)
+        self.loader = DataLoader(self.dataset, batch_size=self.batch_size, sampler=self.sampler)
 
     def setup_training(self):
         ''' Build the model, optimizer, loss, and learning-rate schedule. '''

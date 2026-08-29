@@ -1,30 +1,44 @@
 # TitusAI
 
-TitusAI is currently a deliberately minimal language-model training baseline. The goal is to keep the entire project easy to read before adding more advanced architecture, training, and post-training features.
+TitusAI is a deliberately small decoder-only language model built to keep the complete data, model, and training pipeline easy to read and modify.
 
-## Baseline
+## Current model
 
 - WikiText-103 raw training data
-- GPT-2 tokenizer
-- 256-token context
+- GPT-2 tokenizer with a 50,257-token vocabulary
+- 256-token training context
 - 256 hidden dimensions
-- 4 PyTorch Transformer layers
-- 8 attention heads
-- 1,024-dimension feed-forward layers
+- 4 explicit decoder Transformer blocks
+- 4 attention heads with 64 dimensions per head
+- RoPE positional encoding
+- RMSNorm
+- SwiGLU feed-forward layers with a 768-dimension intermediate width
+- PyTorch scaled dot-product causal attention
+- No dropout
 - About 29 million parameters
-- Single-GPU training
-- AdamW and cross-entropy loss
-- Greedy next-token inference
+
+## Training
+
+- Two CUDA GPUs with PyTorch DistributedDataParallel and NCCL
+- 32 samples per GPU, giving a global batch size of 64
+- AdamW optimizer
+- Peak learning rate of `3e-4`
+- 100-step linear warmup followed by cosine decay to `3e-5`
+- One training epoch
+- Progress printed every 20 seconds
+- Model weights saved every 10 minutes
+- Three rotating checkpoint files are retained
 
 ## Files
 
 ```text
-prepare_data.py  Download and tokenize WikiText-103
-model.py         Language model definition
-train.py         Single-GPU training loop
-inference.py     Load weights and generate text
-requirements.txt Python dependencies
-weights/         Prepared tokens and trained model weights
+prepare_data.py    Download, reconstruct, tokenize, and pack WikiText-103
+model.py           Language model architecture
+README_SOURCES.md  Line-by-line sources for the model architecture
+train.py           Two-GPU distributed training loop
+inference.py       Minimal inference script; not yet updated for the current model
+requirements.txt   Python dependencies
+weights/           Packed training tokens and model checkpoints
 ```
 
 ## Install
@@ -39,20 +53,34 @@ pip install -r requirements.txt
 python prepare_data.py
 ```
 
-Hugging Face handles the dataset and tokenizer downloads through its normal cache. The prepared token tensor is saved to `weights/data.pt`.
+Hugging Face downloads WikiText-103 and the GPT-2 tokenizer through its normal cache. The preparation script reconstructs WikiText articles, inserts the GPT-2 end-of-text token between articles, and writes one flat packed `uint16` token stream to:
+
+```text
+weights/data.bin
+```
+
+No context windows are created during data preparation. Context length belongs to the training process.
 
 ## Train
 
+Training requires two CUDA GPUs and is launched with `torchrun`:
+
 ```bash
-python train.py
+torchrun --standalone --nproc-per-node=2 train.py
 ```
 
-Training runs for one epoch on one CUDA GPU and saves the finished model to `weights/model.pt`.
+The flat token stream is memory-mapped during training. Samples contain 257 tokens with a stride of 256: the first 256 tokens are the model input and the following 256 shifted tokens are the targets. Samples are shuffled and divided between the two distributed workers without both GPUs training on the same sample.
+
+Checkpoints rotate between:
+
+```text
+weights/model_1.pt
+weights/model_2.pt
+weights/model_3.pt
+```
+
+Once all three exist, the oldest checkpoint is overwritten on the next save.
 
 ## Inference
 
-```bash
-python inference.py
-```
-
-The prompt and weight path are intentionally hardcoded in `inference.py` for now.
+`inference.py` is still a minimal placeholder from the earlier baseline and has not yet been updated for the current model architecture and rotating checkpoint names.

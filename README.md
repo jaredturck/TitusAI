@@ -4,9 +4,11 @@ TitusAI is a deliberately small decoder-only language model built to keep the co
 
 ## Current model
 
-- WikiText-103 raw training data
+- WikiText-103 raw data for pretraining
+- OpenThoughts-114k reasoning data for post-training
 - GPT-2 tokenizer with a 50,257-token vocabulary
-- 256-token training context
+- 256-token pretraining context
+- 1,024-token post-training context
 - 256 hidden dimensions
 - 4 explicit decoder Transformer blocks
 - 4 attention heads with 64 dimensions per head
@@ -27,18 +29,18 @@ TitusAI is a deliberately small decoder-only language model built to keep the co
 - One training epoch
 - Progress printed every 20 seconds
 - Model weights saved every 10 minutes
-- Three rotating checkpoint files are retained
+- Three rotating checkpoint files are retained for each training stage
 
 ## Files
 
 ```text
-prepare_data.py    Download, reconstruct, tokenize, and pack WikiText-103
+prepare_data.py    Prepare WikiText pretraining or OpenThoughts post-training data
 model.py           Language model architecture
 README_SOURCES.md  Line-by-line sources for the model architecture
-train.py           Two-GPU distributed training loop
+train.py           Shared two-GPU pretraining and post-training loop
 inference.py       Minimal inference script; not yet updated for the current model
 requirements.txt   Python dependencies
-weights/           Packed training tokens and model checkpoints
+weights/           Prepared datasets and model checkpoints
 ```
 
 ## Install
@@ -47,31 +49,46 @@ weights/           Packed training tokens and model checkpoints
 pip install -r requirements.txt
 ```
 
-## Prepare data
+## Prepare pretraining data
 
 ```bash
-python prepare_data.py
+python prepare_data.py pretrain
 ```
 
-Hugging Face downloads WikiText-103 and the GPT-2 tokenizer through its normal cache. The preparation script reconstructs WikiText articles, inserts the GPT-2 end-of-text token between articles, and writes one flat packed `uint16` token stream to:
+This reconstructs WikiText-103 articles, inserts the GPT-2 end-of-text token between articles, and writes one flat packed `uint16` token stream to:
 
 ```text
 weights/data.bin
 ```
 
-No context windows are created during data preparation. Context length belongs to the training process.
+## Prepare post-training data
 
-## Train
+```bash
+python prepare_data.py posttrain
+```
+
+This downloads the `metadata` subset of `open-thoughts/OpenThoughts-114k` and formats each retained example as a user problem followed by an assistant `<think>...</think>` reasoning trace and final answer. Examples longer than the 1,024-token post-training context are skipped rather than truncated.
+
+Post-training preparation writes fixed 1,025-token `uint16` samples and a matching assistant loss mask to:
+
+```text
+weights/posttrain.bin
+weights/posttrain_mask.bin
+```
+
+Prompt and padding tokens are masked out so only the assistant reasoning and answer contribute to the post-training loss.
+
+## Pretrain
 
 Training requires two CUDA GPUs and is launched with `torchrun`:
 
 ```bash
-torchrun --standalone --nproc-per-node=2 train.py
+torchrun --standalone --nproc-per-node=2 train.py pretrain
 ```
 
-The flat token stream is memory-mapped during training. Samples contain 257 tokens with a stride of 256: the first 256 tokens are the model input and the following 256 shifted tokens are the targets. Samples are shuffled and divided between the two distributed workers without both GPUs training on the same sample.
+Pretraining memory-maps the WikiText stream and creates 257-token samples with a stride of 256. Samples are shuffled and divided between the two distributed workers.
 
-Checkpoints rotate between:
+Pretraining checkpoints rotate between:
 
 ```text
 weights/model_1.pt
@@ -79,7 +96,23 @@ weights/model_2.pt
 weights/model_3.pt
 ```
 
-Once all three exist, the oldest checkpoint is overwritten on the next save.
+## Post-train
+
+After pretraining and preparing the reasoning dataset, run:
+
+```bash
+torchrun --standalone --nproc-per-node=2 train.py posttrain
+```
+
+Post-training initializes the model from the newest `model_*.pt` pretraining checkpoint. The same distributed training loop is used, with the assistant mask applied to cross-entropy targets.
+
+Post-training checkpoints rotate between:
+
+```text
+weights/posttrain_1.pt
+weights/posttrain_2.pt
+weights/posttrain_3.pt
+```
 
 ## Inference
 

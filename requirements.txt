@@ -1,5 +1,6 @@
 torch
 datasets
 transformers
+huggingface_hub
 numpy
 tqdm

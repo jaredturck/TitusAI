@@ -1,17 +1,20 @@
-''' Stream small samples from candidate pre-training datasets. '''
+''' Download and inspect local shards from candidate pre-training datasets. '''
 
 import json
+import random
 from pathlib import Path
 from statistics import mean, median
 
 from datasets import load_dataset
+from huggingface_hub import hf_hub_download, list_repo_files
 from tqdm import tqdm
 from transformers import AutoTokenizer
 
+DATA_PATH = Path(__file__).parent / 'data'
 OUTPUT_PATH = Path(__file__).parent / 'output'
 TOKENIZER_NAME = 'gpt2'
 SAMPLE_COUNT = 20
-SHUFFLE_BUFFER_SIZE = 200
+SAMPLE_POOL_SIZE = 5000
 MAX_TEXT_CHARACTERS = 5000
 SEED = 42
 
@@ -19,7 +22,8 @@ SOURCES = (
     {
         'name': 'DCLM-Edu score 3+',
         'dataset': 'HuggingFaceTB/dclm-edu',
-        'config': None,
+        'local_name': 'dclm_edu',
+        'path_prefix': '',
         'text_field': 'text',
         'score_field': 'edu_int_score',
         'minimum_score': 3,
@@ -28,7 +32,8 @@ SOURCES = (
     {
         'name': 'FineWeb-Edu score 3+',
         'dataset': 'HuggingFaceFW/fineweb-edu',
-        'config': 'sample-10BT',
+        'local_name': 'fineweb_edu',
+        'path_prefix': 'sample/10BT/',
         'text_field': 'text',
         'score_field': 'int_score',
         'minimum_score': 3,
@@ -37,7 +42,8 @@ SOURCES = (
     {
         'name': 'Cosmopedia 100k',
         'dataset': 'HuggingFaceTB/cosmopedia-100k',
-        'config': None,
+        'local_name': 'cosmopedia_100k',
+        'path_prefix': '',
         'text_field': 'text',
         'score_field': None,
         'minimum_score': None,
@@ -46,7 +52,8 @@ SOURCES = (
     {
         'name': 'TinyStories V2 GPT-4',
         'dataset': 'maveriq/tinystoriesv2_gpt4',
-        'config': None,
+        'local_name': 'tinystories_v2',
+        'path_prefix': '',
         'text_field': 'text',
         'score_field': None,
         'minimum_score': None,
@@ -55,7 +62,8 @@ SOURCES = (
     {
         'name': 'ClimbMix shuffled',
         'dataset': 'karpathy/climbmix-400b-shuffle',
-        'config': None,
+        'local_name': 'climbmix',
+        'path_prefix': '',
         'text_field': 'text',
         'score_field': None,
         'minimum_score': None,
@@ -63,33 +71,56 @@ SOURCES = (
     },
 )
 
-def load_source(source):
-    ''' Load one dataset as a streaming iterable. '''
-    if source['config']:
-        dataset = load_dataset(source['dataset'], source['config'], split='train', streaming=True)
-    else:
-        dataset = load_dataset(source['dataset'], split='train', streaming=True)
+def get_local_shard(source):
+    ''' Download one parquet shard once and reuse it on later runs. '''
+    directory = DATA_PATH / source['local_name']
+    directory.mkdir(parents=True, exist_ok=True)
+    local_files = sorted(directory.rglob('*.parquet'))
 
-    return dataset.shuffle(seed=SEED, buffer_size=SHUFFLE_BUFFER_SIZE)
+    if local_files:
+        path = local_files[0]
+        print(f'Reusing {path} ({path.stat().st_size / 1024 ** 2:,.0f} MB)')
+        return path
+
+    print(f'Finding one parquet shard for {source["name"]}...')
+    files = sorted(
+        filename for filename in list_repo_files(source['dataset'], repo_type='dataset')
+        if filename.endswith('.parquet') and filename.startswith(source['path_prefix'])
+    )
+    filename = files[0]
+    print(f'Downloading {filename}...')
+    path = Path(hf_hub_download(
+        repo_id=source['dataset'],
+        filename=filename,
+        repo_type='dataset',
+        local_dir=directory,
+    ))
+    print(f'Saved {path} ({path.stat().st_size / 1024 ** 2:,.0f} MB)')
+    return path
+
+def load_local_shard(path):
+    ''' Load a downloaded parquet shard from local storage. '''
+    print(f'Loading local shard {path}...')
+    dataset = load_dataset('parquet', data_files=str(path), split='train')
+    print(f'Loaded {len(dataset):,} rows.')
+    return dataset
 
 def get_metadata(row, source):
     ''' Keep only metadata useful for manual comparison. '''
-    return {field: row[field] for field in source['metadata_fields']}
+    return {field: row[field] for field in source['metadata_fields'] if field in row}
 
-def collect_samples(source, tokenizer):
-    ''' Collect a small filtered sample from one streaming dataset. '''
+def collect_samples(source, path, tokenizer):
+    ''' Collect a small randomized sample from one local shard. '''
+    dataset = load_local_shard(path)
+    random_generator = random.Random(SEED)
+    indices = random_generator.sample(range(len(dataset)), min(SAMPLE_POOL_SIZE, len(dataset)))
     samples = []
-    print(f'Opening stream for {source["name"]}...')
-    dataset = load_source(source)
-    print('Stream ready; scanning rows...')
-    scanned = 0
+    checked = 0
 
     with tqdm(total=SAMPLE_COUNT, desc=source['name'], unit='samples') as progress:
-        for row in dataset:
-            scanned += 1
-
-            if scanned % 100 == 0:
-                progress.set_postfix(scanned=f'{scanned:,}')
+        for index in indices:
+            row = dataset[index]
+            checked += 1
 
             if source['score_field'] and row[source['score_field']] < source['minimum_score']:
                 continue
@@ -104,6 +135,7 @@ def collect_samples(source, tokenizer):
             samples.append({
                 'dataset': source['name'],
                 'source': source['dataset'],
+                'shard': str(path),
                 'characters': len(text),
                 'preview_tokens': len(preview_ids),
                 'truncated': len(text) > len(preview),
@@ -111,12 +143,12 @@ def collect_samples(source, tokenizer):
                 'text': preview,
             })
             progress.update(1)
-            progress.set_postfix(scanned=f'{scanned:,}')
+            progress.set_postfix(checked=f'{checked:,}')
 
             if len(samples) == SAMPLE_COUNT:
                 break
 
-    print(f'Accepted {len(samples)} samples after scanning {scanned:,} rows.')
+    print(f'Accepted {len(samples)} samples after checking {checked:,} local rows.')
     return samples
 
 def indent_text(text):
@@ -131,6 +163,7 @@ def write_dataset_report(source, samples):
         f'# {source["name"]}',
         '',
         f'Source: `{source["dataset"]}`',
+        f'Shard: `{samples[0]["shard"]}`',
         f'Samples: {len(samples)}',
         '',
     ]
@@ -182,15 +215,17 @@ def write_summary(results):
     return summary_path, jsonl_path
 
 def main():
-    ''' Sample all candidate datasets and write inspection files. '''
+    ''' Download candidate shards and write inspection files. '''
+    DATA_PATH.mkdir(exist_ok=True)
     OUTPUT_PATH.mkdir(exist_ok=True)
     tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_NAME)
     tokenizer.model_max_length = 1_000_000_000
     results = []
 
     for source in SOURCES:
-        print(f'Sampling {source["name"]}...')
-        samples = collect_samples(source, tokenizer)
+        print(f'\nPreparing {source["name"]}...')
+        path = get_local_shard(source)
+        samples = collect_samples(source, path, tokenizer)
         report_path = write_dataset_report(source, samples)
         results.append((source, samples))
         print(f'Wrote {report_path}')

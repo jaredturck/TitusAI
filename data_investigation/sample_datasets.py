@@ -5,6 +5,7 @@ from pathlib import Path
 from statistics import mean, median
 
 from datasets import load_dataset
+from tqdm import tqdm
 from transformers import AutoTokenizer
 
 OUTPUT_PATH = Path(__file__).parent / 'output'
@@ -78,32 +79,44 @@ def get_metadata(row, source):
 def collect_samples(source, tokenizer):
     ''' Collect a small filtered sample from one streaming dataset. '''
     samples = []
+    print(f'Opening stream for {source["name"]}...')
     dataset = load_source(source)
+    print('Stream ready; scanning rows...')
+    scanned = 0
 
-    for row in dataset:
-        if source['score_field'] and row[source['score_field']] < source['minimum_score']:
-            continue
+    with tqdm(total=SAMPLE_COUNT, desc=source['name'], unit='samples') as progress:
+        for row in dataset:
+            scanned += 1
 
-        text = row[source['text_field']].strip()
+            if scanned % 100 == 0:
+                progress.set_postfix(scanned=f'{scanned:,}')
 
-        if not text:
-            continue
+            if source['score_field'] and row[source['score_field']] < source['minimum_score']:
+                continue
 
-        preview = text[:MAX_TEXT_CHARACTERS]
-        preview_ids = tokenizer(preview, add_special_tokens=False, return_attention_mask=False, return_token_type_ids=False, verbose=False)['input_ids']
-        samples.append({
-            'dataset': source['name'],
-            'source': source['dataset'],
-            'characters': len(text),
-            'preview_tokens': len(preview_ids),
-            'truncated': len(text) > len(preview),
-            'metadata': get_metadata(row, source),
-            'text': preview,
-        })
+            text = row[source['text_field']].strip()
 
-        if len(samples) == SAMPLE_COUNT:
-            break
+            if not text:
+                continue
 
+            preview = text[:MAX_TEXT_CHARACTERS]
+            preview_ids = tokenizer(preview, add_special_tokens=False, return_attention_mask=False, return_token_type_ids=False, verbose=False)['input_ids']
+            samples.append({
+                'dataset': source['name'],
+                'source': source['dataset'],
+                'characters': len(text),
+                'preview_tokens': len(preview_ids),
+                'truncated': len(text) > len(preview),
+                'metadata': get_metadata(row, source),
+                'text': preview,
+            })
+            progress.update(1)
+            progress.set_postfix(scanned=f'{scanned:,}')
+
+            if len(samples) == SAMPLE_COUNT:
+                break
+
+    print(f'Accepted {len(samples)} samples after scanning {scanned:,} rows.')
     return samples
 
 def indent_text(text):

@@ -4,3 +4,4 @@ __pycache__/
 weights/*.pt
 data.bin
 *.bin
+data_investigation/output/

@@ -6,3 +6,4 @@ data.bin
 *.bin
 data_investigation/data/
 data_investigation/output/
+data_investigation/pretrain_corpus/

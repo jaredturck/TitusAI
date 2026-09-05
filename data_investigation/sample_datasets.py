@@ -50,6 +50,16 @@ SOURCES = (
         'metadata_fields': ('seed_data', 'format', 'audience', 'text_token_length'),
     },
     {
+        'name': 'Cosmopedia v2',
+        'dataset': 'HuggingFaceTB/smollm-corpus',
+        'local_name': 'cosmopedia_v2',
+        'path_prefix': 'cosmopedia-v2/',
+        'text_field': 'text',
+        'score_field': None,
+        'minimum_score': None,
+        'metadata_fields': ('seed_data', 'format', 'audience', 'token_length'),
+    },
+    {
         'name': 'TinyStories V2 GPT-4',
         'dataset': 'maveriq/tinystoriesv2_gpt4',
         'local_name': 'tinystories_v2',

@@ -8,7 +8,8 @@ It currently examines:
 
 - `HuggingFaceTB/dclm-edu`, filtered to educational score 3+
 - `HuggingFaceFW/fineweb-edu`, using one shard from the 10B-token sample and filtering to educational score 3+
-- `HuggingFaceTB/cosmopedia-100k`
+- `HuggingFaceTB/cosmopedia-100k`, retained as the earlier Cosmopedia v1 reference sample
+- `HuggingFaceTB/smollm-corpus` Cosmopedia v2, the improved Cosmopedia corpus used for SmolLM
 - `maveriq/tinystoriesv2_gpt4`, a convenient parquet mirror of TinyStories V2 for inspection
 - `karpathy/climbmix-400b-shuffle`, included as a modern per-token-efficiency wildcard
 
@@ -20,6 +21,12 @@ Run from the repository root:
 python data_investigation/sample_datasets.py
 ```
 
+`quality_sweep.py` uses the already-downloaded DCLM-Edu and FineWeb-Edu shards to compare exact educational score bands 3, 4, and 5. It writes score distributions and 12 readable examples from each score band.
+
+```bash
+python data_investigation/quality_sweep.py
+```
+
 Downloaded shards are kept under `data_investigation/data/` and are ignored by Git. Delete a dataset's local folder only if you explicitly want that shard downloaded again.
 
 Outputs are written to `data_investigation/output/`:
@@ -27,5 +34,6 @@ Outputs are written to `data_investigation/output/`:
 - one Markdown file per dataset for manual reading
 - `summary.md` with basic length statistics
 - `samples.jsonl` with the combined sample and useful source metadata
+- `quality_sweep.md` with score-band comparisons for the educational web datasets
 
 The generated data and output are investigation artifacts and should not be committed.

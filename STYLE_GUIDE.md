@@ -2,36 +2,51 @@
 
 ## Purpose
 
-This document defines the preferred coding style and cleanup principles for TitusAI.
+This document defines the preferred coding style, cleanup principles, and implementation discipline for TitusAI.
 
-TitusAI is an educational project. Code should be easy to scan, easy to reason about, and useful as a teaching resource. The project should not accumulate production-style infrastructure, abstractions, or defensive machinery unless a concrete requirement justifies them.
+TitusAI is a small educational language-model project. The code should make the model, data, training, and inference easy to understand. Infrastructure should stay boring. Production-style machinery should not be added unless TitusAI has a concrete need for it.
 
-The goal is not to minimize line count at all costs. The goal is to minimize cognitive load while keeping the code correct and reasonably efficient.
+The goal is not minimum line count. The goal is minimum cognitive load while preserving correctness and useful performance.
 
 ## 1. Core Principle
 
-Prefer simple, direct, readable code that makes its intent obvious without requiring the reader to mentally decode clever syntax or excessive abstraction.
+Prefer simple, direct, readable code whose intent is obvious on first inspection.
 
-Readability takes priority over fashionable Python idioms, formatter defaults, or architectural patterns that do not solve a real problem.
+Readability is more important than fashionable Python idioms, formatter defaults, abstraction for its own sake, or patterns copied from larger production systems.
 
-When deciding whether code is simpler, ask:
+When deciding whether a change is simpler, ask:
 
-1. Does this remove information the reader does not need?
-2. Does this avoid repeating static information?
-3. Does this make the data flow easier to follow?
-4. Does this abstraction remove real complexity, or merely move it elsewhere?
-5. Is this code solving a requirement we actually have?
+1. Does it remove information the reader does not need?
+2. Does it avoid repeating static information?
+3. Does it make the data flow easier to follow?
+4. Does an abstraction remove real complexity, or merely move it elsewhere?
+5. Does the code solve a requirement TitusAI actually has?
+6. Does any extra complexity buy a meaningful performance improvement?
 
-A shorter file is not automatically simpler. A file with fewer functions is not automatically simpler. A file with fewer data structures is not automatically simpler.
+A shorter file is not automatically simpler. Fewer functions are not automatically simpler. Fewer data structures are not automatically simpler.
 
-## 2. Do Not Over-Engineer
+## 2. TitusAI Scope and Guardrails
+
+TitusAI is a learning resource, not a production platform.
+
+Keep changes scoped to the task being worked on. Do not turn a cleanup into a repository-wide redesign.
+
+Model architecture, parameter choices, training hyperparameters, corpus composition, and other learning decisions are not style details. Do not change them during cleanup or optimization work unless that change has been discussed and explicitly approved.
+
+Do not introduce infrastructure for hypothetical future scale. Build what the current project needs.
+
+A useful rule for TitusAI is:
+
+> Teach the model, not the plumbing. Keep the plumbing boring.
+
+## 3. Do Not Over-Engineer
 
 Over-engineering is outside the scope of TitusAI.
 
-Do not add infrastructure merely because it would be useful in a larger production system. In particular, avoid adding:
+Avoid adding features merely because they would be useful in a larger production system. In particular, do not add these without a concrete requirement:
 
 - manifests;
-- metadata files;
+- metadata sidecars;
 - build plans;
 - checkpoint or resumability frameworks;
 - custom caching layers;
@@ -39,27 +54,44 @@ Do not add infrastructure merely because it would be useful in a larger producti
 - generalized pipelines;
 - plugin systems;
 - state machines;
-- extra validation frameworks;
+- provenance systems;
 - recovery systems for hypothetical failures;
+- validation frameworks around simple scripts;
 - abstractions intended only for possible future requirements.
 
-If a script can be restarted by deleting its output and running it again, that may be entirely sufficient.
+If a failed build can reasonably be handled by deleting the partial output and running the script again, that may be sufficient.
 
-Keep the plumbing boring.
+Do not confuse more machinery with better engineering.
 
-## 3. Features Versus Optimizations
+## 4. Features Versus Optimizations
 
 Unnecessary features should be removed. Useful optimizations should be kept.
 
-Performance-sensitive code is allowed to be more complex when the complexity produces a real benefit. Examples include batching, multiprocessing, threaded I/O, vectorized operations, or avoiding repeated expensive work.
+Performance-sensitive code may be more complex when that complexity has a clear runtime or resource benefit. Batching, multiprocessing, threaded reads, vectorized operations, and avoiding repeated expensive work can all be appropriate.
 
 Do not remove a meaningful optimization merely to make code visually smaller.
 
-Likewise, do not disguise a feature as an optimization. Atomic output files, resumability, manifests, provenance tracking, and generalized recovery logic are features unless the project has a concrete need for them.
+Likewise, do not disguise a feature as an optimization. Atomic-output workflows, resumability, manifests, provenance tracking, generalized recovery logic, and extra metadata are features unless TitusAI actually needs them.
 
-Start with the simplest correct implementation. Add optimizations one at a time when their benefit is clear.
+Start from a simple correct implementation. Add optimizations deliberately, one at a time, without turning the surrounding code into a framework.
 
-## 4. General Python Preferences
+## 5. Change and Cleanup Discipline
+
+Before changing code:
+
+- read the real implementation;
+- identify the actual requirement;
+- preserve behavior that is not part of the requested change;
+- preserve performance-sensitive behavior unless performance is intentionally being changed;
+- inspect direct callers before changing a function contract;
+- avoid speculative refactoring;
+- review the final diff for accidental behavior changes.
+
+Style cleanup may simplify unnecessarily fragmented control flow, remove genuinely dead code, normalize repeated data, rename unclear variables, or reduce needless abstraction.
+
+Cleanup is not permission to change model architecture, training behavior, dataset composition, or unrelated files.
+
+## 6. General Python Preferences
 
 Unless there is a strong reason otherwise:
 
@@ -71,18 +103,21 @@ Unless there is a strong reason otherwise:
 - Avoid excessive helper functions.
 - Avoid defensive coding for hypothetical problems.
 - Avoid temporary files unless they are genuinely required.
-- Avoid `argparse` and direct `sys.argv` handling unless the file is genuinely a CLI program.
+- Avoid `argparse` and direct `sys.argv` handling unless the file genuinely needs a command-line interface.
 - Keep imports at module scope unless runtime initialization requires otherwise.
 - Prefer single quotes for normal Python strings.
+- Avoid the walrus operator as normal project style.
 - Prefer straightforward code over clever code.
 
 These are strong defaults, not blind prohibitions.
 
-## 5. Functions and Abstraction
+## 7. Functions and Abstraction
 
-Functions should exist because they make the program easier to understand, not because every operation can technically be given a name.
+Functions should exist because they make the program easier to understand.
 
-Avoid splitting one linear operation into many tiny helpers such as:
+Do not create a helper merely because an operation can be named. One function call does not need another function wrapped around it unless the wrapper adds meaning or removes substantial repetition.
+
+Avoid fragmenting one simple pipeline into many helpers such as:
 
 ```python
 get_source_files()
@@ -92,25 +127,25 @@ tokenize_jobs()
 write_documents()
 ```
 
-when the result forces the reader to jump around the file to understand one simple pipeline.
+when the reader then has to jump around the file to understand one linear operation.
 
-At the same time, do not respond to this rule by removing every function and creating one enormous wall of top-level code.
+At the same time, do not remove every function and replace the program with one enormous wall of top-level code.
 
-A useful function should normally do at least one of these things:
+A function earns its place when it does at least one of these things:
 
-- give a meaningful name to a coherent operation;
-- remove substantial repetition;
-- isolate genuinely complicated logic;
-- define a real interface boundary;
-- make the main execution path easier to scan.
+- gives a meaningful name to a coherent operation;
+- removes substantial repeated control flow;
+- isolates genuinely complicated logic;
+- defines a real interface boundary;
+- makes the main execution path easier to scan.
 
-The correct question is not "Can this be a function?" It is "Does making this a function reduce complexity for the reader?"
+The question is not "Can this be a function?" The question is "Does making this a function reduce complexity for the reader?"
 
-## 6. Normalize Repeated Static Data
+## 8. Normalize Repeated Static Information
 
 Do not repeat large pieces of static text when only a small part changes.
 
-For example, this is noisy:
+Bad:
 
 ```python
 FILES = [
@@ -125,23 +160,18 @@ The meaningful information is the checkpoint ID. Store that instead:
 
 ```python
 FINEWEB_CHECKPOINTS = [42, 41, 91, 9]
-```
-
-Then construct the filename where it is needed:
-
-```python
 filename = f'data/train-{checkpoint:05d}-of-00100.parquet'
 ```
 
-This is simpler because the data structure contains only the values that actually vary.
+The data structure should contain the information that actually varies.
 
-Do not confuse literal repetition with clarity. Repeating the same long prefix and suffix dozens of times makes configuration harder to scan and harder to edit.
+Do not confuse literal repetition with clarity. Repeating the same prefix, suffix, repository name, or other fixed value dozens of times makes configuration harder to scan and edit.
 
-## 7. Use Data Structures for Fixed Lookups
+## 9. Use Data Structures for Fixed Relationships
 
 If several branches merely map one known value to another known value, the relationship is data rather than control flow.
 
-Avoid code like:
+Bad:
 
 ```python
 if repo_id == FINEWEB_REPO:
@@ -152,7 +182,7 @@ else:
     target_tokens = TINYSTORIES_END
 ```
 
-when a direct lookup expresses the relationship more clearly:
+Better:
 
 ```python
 TARGET_TOKENS = {
@@ -164,85 +194,32 @@ TARGET_TOKENS = {
 target_tokens = TARGET_TOKENS[repo_id]
 ```
 
-Do not create separate constants such as `FINEWEB_END`, `COSMOPEDIA_END`, and `TINYSTORIES_END` when those values only exist to feed an immediately adjacent lookup structure.
-
-Prefer storing the real domain value. For example, `115_000_000` is the Cosmopedia quota. A cumulative value such as `414_000_000` is an implementation artifact and should not be presented as though it were a property of Cosmopedia.
-
-## 8. Use Data Structures When They Reduce Cognitive Load
-
-Do not treat "one list" or "one dictionary" as a goal in itself.
-
-Several small collections may be clearer than one large nested structure when they represent distinct concepts. Conversely, one well-shaped dictionary may be clearer than three constants plus an `if`/`elif` chain.
-
-Choose the representation that lets a reader answer these questions quickly:
-
-- What values exist?
-- Which values belong together?
-- What actually varies?
-- How is each value used?
-
-Data structures should model the information, not satisfy an arbitrary preference for fewer variables.
-
-## 9. Avoid Repetition, but Do Not Abstract Prematurely
-
-Some repetition is clearer than a generic framework.
-
-Do not create a callback system, source class, configurable pipeline, or helper hierarchy merely because two blocks share a few lines.
-
-However, repeated static data and repeated lookup logic should normally be normalized because doing so directly reduces noise.
-
-A useful distinction is:
-
-- repeated *information* is often worth normalizing;
-- repeated *control flow* may or may not be worth abstracting.
-
-Judge each case by readability.
-
-## 10. Keep the Main Data Flow Visible
-
-For scripts, the reader should be able to understand the main flow from top to bottom.
-
-For example, a corpus builder should visibly resemble:
-
-```text
-checkpoint configuration
-        ↓
-download file
-        ↓
-read dataset
-        ↓
-filter rows
-        ↓
-tokenize text
-        ↓
-write output
-```
-
-Do not bury this flow under multiple layers of generic orchestration.
-
-Dependencies may hide implementation details that are not important to TitusAI. If `load_dataset('parquet', ...)` can hide Parquet internals cleanly, TitusAI does not need to expose lower-level Arrow table construction merely because the dependency uses Arrow internally.
-
-## 11. Prefer the Smallest Appropriate API
-
-When a dependency already provides the operation we need, use it directly.
-
-For example, downloading one known Hugging Face file is simply:
+If several related configuration values always travel together, a single well-shaped structure may be clearer still:
 
 ```python
-from huggingface_hub import hf_hub_download
-
-hf_hub_download(
-    repo_id='HuggingFaceFW/fineweb_edu_100BT-shuffled',
-    filename='data/train-00042-of-00100.parquet',
-    repo_type='dataset',
-)
+DATASETS = {
+    FINEWEB_REPO: (299_000_000, 'data/train-{:05d}-of-00100.parquet', [42, 41, 91, 9]),
+    COSMOPEDIA_REPO: (115_000_000, 'cosmopedia-v2/train-{:05d}-of-00104.parquet', [84, 0, 80, 45]),
+}
 ```
 
-Do not wrap a one-line dependency call in a helper unless the wrapper adds real meaning or removes meaningful repetition.
+Do not create separate constants such as `FINEWEB_END` or `COSMOPEDIA_END` when they are only implementation artifacts. Prefer the real domain value: `115_000_000` is a Cosmopedia quota; `414_000_000` is merely a cumulative position created by one implementation.
 
-Likewise, do not build custom download, cache, retry, or path-management systems when the dependency already handles them adequately for the project.
+Do not treat "one list" or "one dictionary" as a goal. Use the representation that makes the relationships easiest to understand.
 
-## 12. Comprehensions
+## 10. Control Flow
+
+Prefer direct control flow that can be followed from top to bottom.
+
+Use `if` statements for actual behavior: filtering rows, handling genuinely different execution paths, or avoiding unnecessary work.
+
+Do not use `if`/`elif` chains as verbose lookup tables when a dictionary expresses the relationship directly.
+
+If a condition becomes difficult to read, prepare meaningful boolean values first rather than vertically exploding one large expression.
+
+Early `continue` and `return` statements are useful when they keep the main path shallow and obvious.
+
+## 11. Comprehensions and Loops
 
 Simple comprehensions are welcome:
 
@@ -250,25 +227,13 @@ Simple comprehensions are welcome:
 names = [user.name for user in users]
 ```
 
-Avoid comprehensions that combine several kinds of logic, especially when they require vertical formatting or multiple conditions.
+Prefer an explicit loop when a comprehension contains several conditions, multiple `for` clauses, nested structures, side effects, or enough formatting that the reader has to decode it.
 
-Prefer an explicit loop when it is easier to scan.
+Do not use a comprehension merely because it saves lines.
 
-Do not use a comprehension merely because it is shorter.
+Repeated control flow should not automatically become a generic abstraction. Repeated information should usually be normalized. Keep that distinction clear.
 
-## 13. Control Flow
-
-Prefer direct control flow that can be understood from top to bottom.
-
-Avoid large conditions that require the reader to decode several unrelated checks at once.
-
-Do not use an `if`/`elif`/`else` chain for a fixed lookup when a dictionary expresses the same relationship directly.
-
-Do use normal `if` statements when they describe actual behavior, such as filtering rows or choosing between genuinely different execution paths.
-
-The goal is not to eliminate branching. The goal is to avoid using branching as a verbose substitute for data.
-
-## 14. Collections
+## 12. Collections and Configuration
 
 Short flat collections should normally stay compact:
 
@@ -276,35 +241,34 @@ Short flat collections should normally stay compact:
 values = [1, 2, 3, 4, 5]
 ```
 
-Long collections may wrap across lines, but do not put every trivial value on its own line without a readability reason.
+Long flat collections may wrap across lines, but do not put every trivial value on its own line without a readability reason.
 
-Configuration collections should make the values developers are likely to edit easy to find and compare.
+Configuration collections should make values that developers are likely to edit easy to find and compare.
 
-If a collection consists mostly of repeated text with one changing field, reconsider the representation and store the changing field directly.
+Use dictionaries when they naturally model a mapping or grouped configuration. Do not introduce a dictionary solely to avoid two simple statements, but do use one when it removes repetitive lookup control flow or keeps strongly related values together.
 
-## 15. Dictionaries
+For substantial nested dictionaries, use indentation that makes the structure obvious. Very small dictionaries may stay on one line.
 
-Use dictionaries when they naturally model a mapping or grouped configuration.
-
-Do not introduce a dictionary solely to avoid writing two simple statements. Do introduce one when it removes repetitive lookup control flow or keeps related values together.
-
-For substantial dictionaries, structure the indentation so relationships are obvious.
-
-Very small dictionaries may stay on one line:
-
-```python
-data = {'name': 'cat', 'age': 4}
-```
-
-## 16. Naming
+## 13. Naming and Variable Lifetime
 
 Use `snake_case` for variables and functions and `UPPER_SNAKE_CASE` for constants.
 
-Prefer descriptive names that make values understandable without tracing surrounding code.
+Prefer descriptive names that make a value understandable without tracing surrounding code.
 
-Avoid naming implementation artifacts as though they were domain concepts. For example, prefer a dataset's actual token quota over a cumulative `*_END` value when the latter exists only to support one particular loop implementation.
+Avoid single-letter names for meaningful values. Conventional short loop indexes such as `i` are fine when their meaning is obvious and short-lived.
 
-## 17. Strings
+A variable should exist because it:
+
+- gives a value a useful name;
+- avoids repeated work;
+- simplifies a complicated expression;
+- is needed across multiple operations.
+
+Avoid naming implementation artifacts as though they were domain concepts. Prefer a dataset's actual token quota over a cumulative `*_END` value when the latter exists only to support one loop implementation.
+
+Do not keep values alive longer than needed, but do not recompute expensive values merely to avoid a local variable.
+
+## 14. Strings and Docstrings
 
 Use single quotes for normal Python strings.
 
@@ -316,13 +280,9 @@ message = f'Found {count} records'
 values = ['one', 'two', 'three']
 ```
 
-Use double quotes only when they genuinely improve readability or are required by Python syntax.
+Use double quotes only when they genuinely improve readability or Python syntax requires them.
 
-## 18. Docstrings
-
-Use triple single quotes.
-
-Keep docstrings on one physical line and describe only the high-level purpose.
+Use triple single quotes for docstrings. Keep the entire docstring on one physical line with a short high-level purpose sentence.
 
 Preferred:
 
@@ -332,103 +292,171 @@ def add(num1, num2):
     return num1 + num2
 ```
 
-Do not use multiline docstrings merely to document obvious implementation details.
+Do not use multiline docstrings to narrate implementation details. The code should explain the implementation.
 
-## 19. Imports
+## 15. Imports and Dependencies
 
-Keep imports at module scope unless runtime initialization requires another order.
+Keep imports at module scope unless initialization order or another real runtime requirement requires otherwise.
 
-Compact import blocks are preferred when they remain readable.
+Multiple ordinary modules may share one import line when that keeps the import block compact and readable.
 
 Do not use wildcard imports.
 
-Do not add dependencies when the standard library or an existing dependency already provides a simple solution.
+Prefer an existing dependency's smallest appropriate API over rebuilding the same machinery in TitusAI.
 
-## 20. Function Signatures and Calls
+For example, downloading one known Hugging Face file does not need a custom downloader:
 
-Keep function signatures on one line as a strong default.
+```python
+path = hf_hub_download(repo_id=repo_id, filename=filename, repo_type='dataset')
+```
 
-Keep simple function calls compact rather than putting every argument on its own line.
+Likewise, if `load_dataset('parquet', ...)` cleanly hides Parquet implementation details, TitusAI does not need to expose lower-level Arrow table machinery unless that lower-level API provides a real performance benefit we have chosen to keep.
 
-Preferred:
+Do not add dependencies merely to make a trivial operation look more abstract.
+
+## 16. Layout and Formatting
+
+Use vertical space for meaningful structure, not because a formatter prefers every argument on a separate line.
+
+Use roughly 140 characters as a visual line-length guideline, not a hard limit. Keep logically indivisible values such as URLs, model identifiers, or simple calls intact when splitting them would be harder to read.
+
+Keep function signatures on one physical line as a strong default.
+
+Keep simple function calls compact:
 
 ```python
 result = some_function(first_value, second_value, third_value)
 ```
 
-Vertical formatting should communicate meaningful structure, not merely consume space.
+Do not put every argument on its own line merely because a call has several arguments.
 
-## 21. Blank Lines
+Use one blank line between top-level code structures and logical phases. Avoid two consecutive blank lines as normal project style.
 
-Use one blank line to separate logical phases and code structures.
+Automated formatters and linters are review tools, not the authority on readability. Do not make working code worse merely to satisfy a mechanical preference.
 
-Avoid excessive vertical spacing.
+## 17. Error Handling and Defensive Code
 
-Blank lines should tell the reader that one coherent operation has ended and another has begun.
+Keep error handling proportional to real failure modes.
 
-## 22. Comments
+Avoid broad `try`/`except` blocks unless the code is intentionally handling a genuine boundary where arbitrary failures must be captured.
 
-Comments should explain information that cannot be read directly from the code.
+Do not add retries, fallback paths, extra validation layers, or recovery logic for hypothetical problems that have not been observed or required.
 
-Avoid narrating obvious statements.
+Do not add explicit `raise` statements simply to make a script look defensive. Add validation when an invalid state would otherwise produce confusing or dangerous behavior.
 
-Comments are useful for:
+Simple scripts are allowed to fail normally and expose the underlying error.
 
-- non-obvious external constraints;
-- subtle performance decisions;
-- intentional workarounds;
-- reasons an apparently strange operation must remain.
+## 18. Dead Code and Comments
 
-Keep comments concise.
+Remove genuinely dead code after checking that the expression has no useful side effect.
 
-## 23. Performance-Sensitive Code
+Do not keep unused variables, parameters, helpers, or configuration merely because they might be useful later.
 
-Do not rewrite a measured or clearly important hot path merely because a slower version is aesthetically simpler.
+Comments should add information that cannot be read directly from the code.
 
-When adding an optimization, keep the surrounding design as simple as practical and make the optimization's purpose obvious.
+Useful comments explain:
 
-Examples of justified complexity may include:
+- a non-obvious external constraint;
+- a subtle performance decision;
+- an intentional workaround;
+- why an apparently strange operation must remain.
+
+Avoid comments that simply narrate the next statement.
+
+## 19. Performance-Sensitive Code
+
+Performance is a real requirement for training and data preparation. Simplicity does not mean deliberately slow code.
+
+Before adding complexity for performance, identify what work is expensive and whether the optimization addresses it directly.
+
+Justified complexity may include:
 
 - batch tokenization;
 - multiprocessing;
 - threaded reads;
 - vectorized filtering;
-- avoiding repeated model or tokenizer loading.
+- avoiding repeated model or tokenizer loading;
+- reducing unnecessary copies of large tensors or datasets;
+- using compact numeric formats when appropriate.
 
-Optimizations should be added because they improve runtime or resource use, not because they appear sophisticated.
+Keep the optimization local and obvious. Do not let one optimization grow into a generalized execution framework.
 
-## 24. Educational Code
+When a performance change is material and measurable, benchmark it rather than assuming a more complicated implementation is faster.
 
-TitusAI is a learning resource. Code should teach the model or ML concept, not distract the reader with infrastructure.
+## 20. Data Preparation Code
 
-Prefer code where a learner can identify:
+Data scripts should make the real transformation visible:
 
-- what data is being used;
-- how it is filtered;
-- how it is tokenized;
-- how the model is built;
-- how training works;
-- how inference works.
+```text
+known source files
+        ↓
+download/read
+        ↓
+filter
+        ↓
+tokenize
+        ↓
+write training data
+```
+
+Do not bury this flow under generic source classes, manifests, merge stages, temporary parts, or metadata systems unless a real requirement demands them.
+
+Prefer an output format that the next stage can consume directly. Do not add an intermediate text, JSON, or other representation merely because it is easier to inspect if training ultimately needs token IDs.
+
+Store only the source configuration that actually varies. Use simple data structures to describe fixed relationships between repositories, checkpoint IDs, quotas, and filename patterns.
+
+Quality filtering rules are part of the corpus design and should be visible enough for a learner to understand what data is being selected.
+
+## 21. Model, Training, and Inference Code
+
+The core ML path should remain easy to trace.
+
+A learner should be able to find and understand:
+
+- model dimensions and layers;
+- attention and feed-forward computation;
+- normalization and positional encoding;
+- loss computation;
+- optimizer and learning-rate behavior;
+- batching and context length;
+- checkpoint loading/saving where genuinely needed for training;
+- token sampling during inference.
+
+Do not hide educationally important ML logic behind generalized configuration frameworks or excessive wrappers.
+
+Performance-specific PyTorch code may be compact or specialized when it materially improves training speed or memory use, but keep the reason for the complexity clear.
+
+Architecture and hyperparameter changes must be treated as intentional project decisions, not incidental cleanup.
+
+## 22. Educational Code
+
+TitusAI code should teach the model or ML concept, not the infrastructure surrounding it.
+
+Prefer code where a learner can identify what data is used, how it is filtered, how it becomes tokens, how the model transforms those tokens, how training updates the model, and how inference produces output.
 
 Avoid architecture whose main lesson is how to maintain the architecture itself.
 
-## 25. Cleanup Discipline
+Do not remove useful names or structure merely to reduce line count. Clear repetition can be better than premature abstraction, while normalized repeated data can be better than literal duplication. Judge both by cognitive load.
 
-When cleaning up existing code:
+## 23. Review Checklist
 
-1. Read the real implementation.
-2. Identify the actual requirements.
-3. Remove features that do not serve those requirements.
-4. Preserve meaningful optimizations unless intentionally changing performance.
-5. Normalize repeated static information.
-6. Replace fixed lookup control flow with data structures when clearer.
-7. Remove abstraction that merely relocates complexity.
-8. Do not rewrite unrelated code.
-9. Review the final diff for accidental behavior changes.
+Before finalizing TitusAI code, check:
 
-Cleanup is not permission to redesign the entire repository.
+- Is the code correct for the task actually requested?
+- Is the main execution path easy to follow?
+- Did I add any feature that was not requested or required?
+- Did I preserve useful optimizations?
+- Is repeated static information normalized?
+- Is fixed lookup data represented as data rather than repetitive branching?
+- Does each function reduce complexity rather than merely relocate it?
+- Are collections shaped around the information that actually varies?
+- Are names describing real domain concepts rather than implementation artifacts?
+- Did I avoid speculative defensive code and unnecessary abstraction?
+- Did I keep model architecture, hyperparameters, and corpus decisions unchanged unless explicitly approved?
+- Did I avoid unrelated refactoring?
+- Does the final diff remain useful as a teaching resource?
 
-## 26. Final Principle
+## 24. Final Principle
 
 TitusAI code should be unsurprising.
 
@@ -436,7 +464,7 @@ Use abstraction when it removes real complexity.
 
 Use data structures when they make relationships clearer.
 
-Do not repeat static information when only one small value changes.
+Do not repeat static information when only a small value changes.
 
 Do not replace useful structure with walls of code in the name of simplicity.
 

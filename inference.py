@@ -1,4 +1,4 @@
-''' Generate raw continuations from the pretrained language model. '''
+''' Generate continuations from pretrained or post-trained checkpoints. '''
 
 import sys
 from pathlib import Path
@@ -9,17 +9,20 @@ from transformers import AutoTokenizer
 from model import LanguageModel
 
 WEIGHTS_PATH = Path('weights')
-CONTEXT_LENGTH = 256
 TOKENIZER_NAME = 'gpt2'
 MAX_NEW_TOKENS = 256
 DEVICE = 'cuda'
 
 class Inference:
-    ''' Generate raw continuations from the latest pretraining checkpoint. '''
+    ''' Generate continuations from the selected training stage. '''
 
-    def __init__(self):
-        ''' Load the tokenizer and latest pretraining checkpoint. '''
-        checkpoints = sorted(WEIGHTS_PATH.glob('model_*.pt'), key=lambda path: path.stat().st_mtime)
+    def __init__(self, stage):
+        ''' Load the tokenizer and latest checkpoint for the selected stage. '''
+        assert stage in ('pretrain', 'posttrain')
+        self.stage = stage
+        self.context_length = 256 if stage == 'pretrain' else 1024
+        pattern = 'model_*.pt' if stage == 'pretrain' else 'posttrain_*.pt'
+        checkpoints = sorted(WEIGHTS_PATH.glob(pattern), key=lambda path: path.stat().st_mtime)
         self.model_path = checkpoints[-1]
         self.tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_NAME)
         self.model = LanguageModel().to(DEVICE)
@@ -28,12 +31,15 @@ class Inference:
 
     def generate(self, prompt):
         ''' Generate the model's greedy continuation without altering its logits. '''
+        if self.stage == 'posttrain':
+            prompt = f'User:\n{prompt}\nAssistant:\n'
+
         tokens = self.tokenizer(prompt, return_tensors='pt')['input_ids'].to(DEVICE)
         generated = []
 
         with torch.inference_mode():
             for _ in range(MAX_NEW_TOKENS):
-                logits = self.model(tokens[:, -CONTEXT_LENGTH:])
+                logits = self.model(tokens[:, -self.context_length:])
                 next_token = logits[:, -1].argmax(dim=-1, keepdim=True)
                 token_id = next_token.item()
                 generated.append(token_id)
@@ -56,4 +62,4 @@ class Inference:
             print(file=sys.stderr)
 
 if __name__ == '__main__':
-    Inference().run()
+    Inference(sys.argv[1]).run()

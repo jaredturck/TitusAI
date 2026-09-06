@@ -49,7 +49,11 @@ torchrun --standalone --nproc-per-node=2 train.py posttrain
 torchrun --standalone --nproc-per-node=2 train.py all
 ```
 
-`pretrain` trains from scratch, `posttrain` continues from the newest pretraining checkpoint, and `all` runs both stages in sequence. Training uses two CUDA GPUs with DistributedDataParallel and keeps three rotating checkpoints per stage.
+Each training run creates a fresh optimizer and learning-rate schedule. If a `.pt` checkpoint already exists in `weights/`, the model intentionally warm-starts from the newest checkpoint instead of returning to random initialization. The intent is to retain any useful learned structure while allowing the fresh optimization run to quickly reshape patterns that no longer help.
+
+Training uses two CUDA GPUs with DistributedDataParallel, BF16 autocast, FlashAttention through PyTorch scaled dot-product attention, and fused AdamW. The model graph is treated as static and DDP gradient buckets are reused as gradient views to reduce unnecessary communication copies and memory use.
+
+Training progress is intentionally lightweight. ETA timing state is not reset at epoch boundaries, so the first ETA reported after an epoch change may be inaccurate; this avoids adding bookkeeping solely to improve a non-critical display value. Training keeps three rotating checkpoints per stage.
 
 ## Inference
 

@@ -1,12 +1,11 @@
-''' Inspect the Smol-SmolTalk training split without downloading it. '''
+''' Inspect the cached Smol-SmolTalk training split for TitusAI post-training. '''
 
-import json
-from collections import Counter
+import random
+from collections import Counter, defaultdict
 from pathlib import Path
 from statistics import mean, median
-from urllib.parse import urlencode
-from urllib.request import urlopen
 
+from datasets import load_dataset
 from transformers import AutoTokenizer
 
 DATASET_NAME = 'HuggingFaceTB/smol-smoltalk'
@@ -14,67 +13,40 @@ TOKENIZER_NAME = 'gpt2'
 OUTPUT_PATH = Path('data_investigation/output/smol_smoltalk_train_report.txt')
 SAMPLE_SIZE = 200
 SAMPLE_CHARACTER_LIMIT = 1200
-
-SOURCES = [
-    'smol-magpie-ultra-short',
-    'self-oss-instruct',
-    'openhermes-50k',
-    'smol-contraints',
-    'smollm-rewrite-30k',
-    'smol-summarize-20k',
-    'smol-summarize-5k',
-    'explore-instruct-rewrite',
-    'longalign',
-    'everyday-conversations',
-]
+RANDOM_SEED = 42
 
 CODE_MARKERS = ('```', 'python', 'function', 'code', 'program', 'algorithm')
 CONSTRAINT_MARKERS = ('exactly', 'must contain', 'response should', 'bullet points', 'all lowercase', 'all uppercase')
 
-def fetch_source(source, offset, length):
-    ''' Fetch filtered rows from the Hugging Face dataset viewer. '''
-    query = urlencode({
-        'dataset': DATASET_NAME,
-        'config': 'default',
-        'split': 'train',
-        'where': f'"source"=\'{source}\'',
-        'offset': offset,
-        'length': length,
-    })
-    with urlopen(f'https://datasets-server.huggingface.co/filter?{query}') as response:
-        return json.load(response)
-
-def get_samples(source):
-    ''' Get exact source count and a small spread of training rows. '''
-    first = fetch_source(source, 0, min(100, SAMPLE_SIZE))
-    count = first['num_rows_total']
-    rows = first['rows']
-
-    if count > 100 and SAMPLE_SIZE > 100:
-        offset = max(0, count // 2 - 50)
-        rows += fetch_source(source, offset, min(100, SAMPLE_SIZE - 100))['rows']
-
-    return count, rows
-
 def main():
-    ''' Write a compact train-split suitability report. '''
+    ''' Analyze the locally cached train split and write a compact report. '''
+    print(f'Loading cached {DATASET_NAME} train split')
+    dataset = load_dataset(DATASET_NAME, split='train')
     tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_NAME)
-    source_data = {}
-    total_rows = 0
+    rng = random.Random(RANDOM_SEED)
 
-    for source in SOURCES:
-        print(f'Inspecting {source}')
-        count, rows = get_samples(source)
-        source_data[source] = (count, rows)
-        total_rows += count
+    source_counts = Counter(dataset['source'])
+    sampled_indexes = defaultdict(list)
+    seen = Counter()
+
+    for index, source in enumerate(dataset['source']):
+        seen[source] += 1
+        samples = sampled_indexes[source]
+
+        if len(samples) < SAMPLE_SIZE:
+            samples.append(index)
+        else:
+            slot = rng.randrange(seen[source])
+            if slot < SAMPLE_SIZE:
+                samples[slot] = index
 
     report = []
     report.append('Smol-SmolTalk training split investigation')
     report.append('=========================================')
     report.append(f'Dataset: {DATASET_NAME}')
-    report.append(f'Exact rows across known sources: {total_rows:,}')
+    report.append(f'Train rows: {len(dataset):,}')
     report.append(f'Sampled rows per source: up to {SAMPLE_SIZE}')
-    report.append('Rows are queried through the Hugging Face dataset viewer; the full training dataset is not downloaded.')
+    report.append('The train split is loaded through datasets; previously downloaded Hugging Face cache files are reused.')
     report.append('Token counts use raw message content only and exclude role labels, separators, and EOS tokens.')
     report.append('')
     report.append('Source counts and sampled characteristics')
@@ -83,8 +55,9 @@ def main():
 
     detailed = {}
 
-    for source in SOURCES:
-        count, rows = source_data[source]
+    for source, count in source_counts.most_common():
+        indexes = sampled_indexes[source]
+        rows = [dataset[index] for index in indexes]
         token_counts = []
         multi_turn = 0
         system = 0
@@ -92,8 +65,10 @@ def main():
         constraint_like = 0
         role_patterns = Counter()
 
-        for item in rows:
-            messages = item['row']['messages']
+        print(f'Inspecting {source}: {count:,} rows, {len(rows)} sampled')
+
+        for row in rows:
+            messages = row['messages']
             roles = [message['role'] for message in messages]
             contents = [message['content'] or '' for message in messages]
             text = '\n'.join(contents)
@@ -113,27 +88,28 @@ def main():
         sampled = len(rows)
         fit = sum(value <= 1024 for value in token_counts) / sampled
         report.append(
-            f'{source} | {count:,} | {count / total_rows:.1%} | {sampled} | {mean(token_counts):.1f} | '
+            f'{source} | {count:,} | {count / len(dataset):.1%} | {sampled} | {mean(token_counts):.1f} | '
             f'{median(token_counts):.1f} | {fit:.1%} | {multi_turn / sampled:.1%} | {system / sampled:.1%} | '
             f'{code_like / sampled:.1%} | {constraint_like / sampled:.1%}'
         )
-        detailed[source] = (rows, role_patterns)
+        detailed[source] = (indexes, role_patterns)
 
     report.append('')
     report.append('Representative training conversations')
     report.append('-------------------------------------')
 
-    for source in SOURCES:
-        rows, role_patterns = detailed[source]
+    for source, _ in source_counts.most_common():
+        indexes, role_patterns = detailed[source]
         report.append('')
         report.append(f'### {source}')
         report.append('Sampled role patterns: ' + ', '.join(f'{pattern} ({count})' for pattern, count in role_patterns.most_common(4)))
 
-        sample_indexes = sorted(set((0, len(rows) // 2, len(rows) - 1)))
-        for sample_index in sample_indexes:
-            item = rows[sample_index]
-            report.append(f'Row {item["row_idx"]:,}')
-            for message in item['row']['messages']:
+        sample_positions = sorted(set((0, len(indexes) // 2, len(indexes) - 1)))
+        for position in sample_positions:
+            index = indexes[position]
+            row = dataset[index]
+            report.append(f'Row {index:,}')
+            for message in row['messages']:
                 content = (message['content'] or '').strip()
                 if len(content) > SAMPLE_CHARACTER_LIMIT:
                     content = content[:SAMPLE_CHARACTER_LIMIT] + ' [...]'

@@ -35,7 +35,7 @@ PRETRAIN_DATASETS = {
     TINYSTORIES_REPO: ('tinystories_v2', 46_000_000, 'data/train-{:05d}-of-00005.parquet', [2, 1]),
 }
 
-CODE_MARKERS = ('```', 'python', 'javascript', 'function', 'write code', 'programming', 'algorithm', 'class ')
+CODE_MARKERS = ('```', 'python', 'javascript', 'write code', 'programming', 'implement a function', 'def ', 'import ')
 WORKER_TOKENIZER = None
 
 def initialize_worker():

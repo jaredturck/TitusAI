@@ -19,8 +19,9 @@ POSTTRAIN_MASK_PATH = WEIGHTS_PATH / 'posttrain_mask.bin'
 FINEWEB_REPO = 'HuggingFaceFW/fineweb_edu_100BT-shuffled'
 COSMOPEDIA_REPO = 'HuggingFaceTB/smollm-corpus'
 TINYSTORIES_REPO = 'maveriq/tinystoriesv2_gpt4'
-POSTTRAIN_DATASET_NAME = 'open-thoughts/OpenThoughts-114k'
-POSTTRAIN_DATASET_CONFIG = 'metadata'
+OASST_REPO = 'OpenAssistant/oasst1'
+SMOLTALK_REPO = 'HuggingFaceTB/smoltalk'
+SMOLTALK_CONFIG = 'everyday-conversations'
 TOKENIZER_NAME = 'gpt2'
 READ_BATCH_SIZE = 65_536
 TOKENIZER_BATCH_SIZE = 256
@@ -34,6 +35,7 @@ PRETRAIN_DATASETS = {
     TINYSTORIES_REPO: ('tinystories_v2', 46_000_000, 'data/train-{:05d}-of-00005.parquet', [2, 1]),
 }
 
+CODE_MARKERS = ('```', 'python', 'javascript', 'function', 'write code', 'programming', 'algorithm', 'class ')
 WORKER_TOKENIZER = None
 
 def initialize_worker():
@@ -136,46 +138,127 @@ def prepare_pretrain():
 
     print(f'Saved 460,000,000 tokens to {PRETRAIN_DATA_PATH}')
 
-def write_reasoning_batch(tokenizer, data_file, mask_file, batch):
-    ''' Write fixed reasoning samples and assistant loss masks. '''
-    prompts = [f'User:\n{problem}\nAssistant:\n<think>\n' for problem in batch['problem']]
-    responses = [f'{reasoning}\n</think>\n{solution}' for reasoning, solution in zip(batch['deepseek_reasoning'], batch['deepseek_solution'])]
-    prompt_ids = tokenizer(prompts, add_special_tokens=False, return_attention_mask=False, return_token_type_ids=False, verbose=False)['input_ids']
-    response_ids = tokenizer(responses, add_special_tokens=False, return_attention_mask=False, return_token_type_ids=False, verbose=False)['input_ids']
-    sequence_length = POSTTRAIN_CONTEXT_LENGTH + 1
-    tokens = np.full((len(prompts), sequence_length), tokenizer.eos_token_id, dtype=np.uint16)
-    masks = np.zeros((len(prompts), sequence_length), dtype=np.uint8)
-    sample_count = 0
+def build_oasst_conversations(dataset):
+    ''' Build strict English human conversation paths ending in top-ranked responses. '''
+    by_id = {row['message_id']: row for row in dataset}
+    conversations = []
 
-    for prompt, response in zip(prompt_ids, response_ids):
-        response = response + [tokenizer.eos_token_id]
-        length = len(prompt) + len(response)
-
-        if length > sequence_length:
+    for row in dataset:
+        if row['role'] != 'assistant' or row['lang'] != 'en':
+            continue
+        if row['deleted'] or not row['review_result'] or row['synthetic'] or row['rank'] != 0:
             continue
 
-        tokens[sample_count, :len(prompt)] = prompt
-        tokens[sample_count, len(prompt):length] = response
-        masks[sample_count, len(prompt):length] = 1
-        sample_count += 1
+        messages = []
+        current = row
 
-    tokens[:sample_count].tofile(data_file)
-    masks[:sample_count].tofile(mask_file)
-    return sample_count
+        while current is not None:
+            if current['lang'] != 'en' or current['deleted'] or not current['review_result'] or current['synthetic']:
+                messages = []
+                break
+
+            role = 'user' if current['role'] == 'prompter' else 'assistant'
+            messages.append({'role': role, 'content': current['text']})
+            current = by_id.get(current['parent_id']) if current['parent_id'] else None
+
+        messages.reverse()
+
+        if len(messages) >= 2 and messages[-1]['role'] == 'assistant':
+            conversations.append(messages)
+
+    return conversations
+
+def is_code_heavy(messages):
+    ''' Reject conversations whose user prompts are clearly code-focused. '''
+    user_text = '\n'.join(message['content'] or '' for message in messages if message['role'] == 'user').lower()
+    return any(marker in user_text for marker in CODE_MARKERS)
+
+def encode_conversation(tokenizer, messages, last_assistant_only=False):
+    ''' Encode one conversation and mark assistant response tokens for loss. '''
+    token_ids = []
+    loss_mask = []
+    last_assistant = max(index for index, message in enumerate(messages) if message['role'] == 'assistant')
+
+    for index, message in enumerate(messages):
+        role = message['role']
+        content = (message['content'] or '').replace('<|endoftext|>', ' ').strip()
+
+        if role not in ('user', 'assistant') or not content:
+            return None
+
+        prefix = ('' if not token_ids else '\n') + ('User:\n' if role == 'user' else 'Assistant:\n')
+        prefix_ids = tokenizer.encode(prefix, add_special_tokens=False)
+        content_ids = tokenizer.encode(content, add_special_tokens=False)
+        token_ids.extend(prefix_ids)
+        loss_mask.extend([0] * len(prefix_ids))
+        token_ids.extend(content_ids)
+
+        train_response = role == 'assistant' and (not last_assistant_only or index == last_assistant)
+        loss_mask.extend([1 if train_response else 0] * len(content_ids))
+
+        if role == 'assistant':
+            token_ids.append(tokenizer.eos_token_id)
+            loss_mask.append(1 if train_response else 0)
+
+    if len(token_ids) > POSTTRAIN_CONTEXT_LENGTH + 1:
+        return None
+
+    return token_ids, loss_mask
+
+def write_conversation(tokenizer, data_file, mask_file, messages, last_assistant_only=False):
+    ''' Write one fixed-length conversation and assistant loss mask. '''
+    encoded = encode_conversation(tokenizer, messages, last_assistant_only)
+
+    if encoded is None:
+        return False
+
+    token_ids, loss_mask = encoded
+    sequence_length = POSTTRAIN_CONTEXT_LENGTH + 1
+    tokens = np.full(sequence_length, tokenizer.eos_token_id, dtype=np.uint16)
+    masks = np.zeros(sequence_length, dtype=np.uint8)
+    tokens[:len(token_ids)] = token_ids
+    masks[:len(loss_mask)] = loss_mask
+    tokens.tofile(data_file)
+    masks.tofile(mask_file)
+    return True
 
 def prepare_posttrain():
-    ''' Prepare masked OpenThoughts reasoning samples. '''
+    ''' Prepare filtered conversational assistant fine-tuning samples. '''
     tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_NAME)
-    dataset = load_dataset(POSTTRAIN_DATASET_NAME, POSTTRAIN_DATASET_CONFIG, split='train')
-    sample_count = 0
+    print(f'Loading {OASST_REPO}')
+    oasst = load_dataset(OASST_REPO, split='train')
+    oasst_conversations = build_oasst_conversations(oasst)
+    print(f'Loading {SMOLTALK_REPO} ({SMOLTALK_CONFIG})')
+    everyday = load_dataset(SMOLTALK_REPO, SMOLTALK_CONFIG, split='train')
     WEIGHTS_PATH.mkdir(exist_ok=True)
 
-    with POSTTRAIN_DATA_PATH.open('wb') as data_file, POSTTRAIN_MASK_PATH.open('wb') as mask_file, tqdm(total=len(dataset), desc='Preparing', unit='samples') as progress:
-        for batch in dataset.iter(batch_size=TOKENIZER_BATCH_SIZE):
-            sample_count += write_reasoning_batch(tokenizer, data_file, mask_file, batch)
-            progress.update(len(batch['problem']))
+    oasst_written = 0
+    oasst_code_skipped = 0
+    oasst_length_skipped = 0
+    everyday_written = 0
+    everyday_skipped = 0
 
-    print(f'Saved {sample_count:,} reasoning samples to {POSTTRAIN_DATA_PATH}')
+    with POSTTRAIN_DATA_PATH.open('wb') as data_file, POSTTRAIN_MASK_PATH.open('wb') as mask_file:
+        for messages in tqdm(oasst_conversations, desc='OASST1', unit='samples'):
+            if is_code_heavy(messages):
+                oasst_code_skipped += 1
+                continue
+
+            if write_conversation(tokenizer, data_file, mask_file, messages, last_assistant_only=True):
+                oasst_written += 1
+            else:
+                oasst_length_skipped += 1
+
+        for row in tqdm(everyday, desc='Everyday conversations', unit='samples'):
+            if write_conversation(tokenizer, data_file, mask_file, row['messages']):
+                everyday_written += 1
+            else:
+                everyday_skipped += 1
+
+    total = oasst_written + everyday_written
+    print(f'Saved {total:,} post-training samples to {POSTTRAIN_DATA_PATH}')
+    print(f'OASST1: {oasst_written:,} kept, {oasst_code_skipped:,} code-heavy skipped, {oasst_length_skipped:,} over-length/invalid skipped')
+    print(f'Everyday conversations: {everyday_written:,} kept, {everyday_skipped:,} over-length/invalid skipped')
 
 if __name__ == '__main__':
     stages = ('pretrain', 'posttrain') if sys.argv[1] == 'all' else (sys.argv[1],)

@@ -4,7 +4,7 @@ TitusAI is a deliberately small decoder-only language model built to keep the co
 
 ## Model
 
-- WikiText-103 pretraining and OpenThoughts-114k reasoning post-training
+- FineWeb-Edu, Cosmopedia v2, and TinyStories pretraining with OpenThoughts-114k reasoning post-training
 - GPT-2 tokenizer with a 50,257-token vocabulary
 - 256 hidden dimensions
 - 4 decoder Transformer blocks
@@ -39,7 +39,7 @@ python prepare_data.py posttrain
 python prepare_data.py all
 ```
 
-`pretrain` prepares WikiText-103, `posttrain` prepares OpenThoughts-114k reasoning data, and `all` prepares both in sequence.
+`pretrain` prepares the 460M-token FineWeb-Edu, Cosmopedia v2, and TinyStories corpus, `posttrain` prepares OpenThoughts-114k reasoning data, and `all` prepares both in sequence.
 
 ## Train
 

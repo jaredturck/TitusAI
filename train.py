@@ -10,6 +10,7 @@ import numpy as np
 import torch
 import torch.distributed as dist
 from torch import nn
+from torch.nn.attention import SDPBackend, sdpa_kernel
 from torch.nn.parallel import DistributedDataParallel
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torch.utils.data import DataLoader, DistributedSampler, TensorDataset
@@ -94,12 +95,14 @@ class Trainer:
         checkpoints = sorted(WEIGHTS_PATH.glob('*.pt'), key=lambda path: path.stat().st_mtime)
 
         if checkpoints:
+            # Every run intentionally warm-starts model weights while creating a fresh optimizer and schedule.
             weights = torch.load(checkpoints[-1], map_location='cpu')
             del weights['output.weight']
             model.load_state_dict(weights, strict=False)
 
-        self.model = DistributedDataParallel(model.to(self.device), device_ids=[self.local_rank])
-        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=LEARNING_RATE)
+        model = model.to(self.device)
+        self.model = DistributedDataParallel(model, device_ids=[self.local_rank], broadcast_buffers=False, gradient_as_bucket_view=True, static_graph=True)
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=LEARNING_RATE, fused=True)
         self.loss_function = nn.CrossEntropyLoss()
 
         total_steps = len(self.loader) * EPOCHS
@@ -137,48 +140,50 @@ class Trainer:
 
     def train(self):
         ''' Train the language model. '''
-        for epoch in range(EPOCHS):
-            if self.stage == 'pretrain' and epoch:
-                self.setup_pretrain_epoch(epoch)
+        with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
+            for epoch in range(EPOCHS):
+                if self.stage == 'pretrain' and epoch:
+                    self.setup_pretrain_epoch(epoch)
 
-            self.sampler.set_epoch(epoch)
+                self.sampler.set_epoch(epoch)
 
-            for step, batch in enumerate(self.loader):
-                inputs, targets = self.prepare_batch(batch)
+                for step, batch in enumerate(self.loader):
+                    inputs, targets = self.prepare_batch(batch)
 
-                logits = self.model(inputs)
-                loss = self.loss_function(logits.reshape(-1, logits.shape[-1]), targets.reshape(-1))
+                    with torch.autocast('cuda', dtype=torch.bfloat16):
+                        logits = self.model(inputs)
+                        loss = self.loss_function(logits.reshape(-1, logits.shape[-1]), targets.reshape(-1))
 
-                self.optimizer.zero_grad()
-                loss.backward()
-                self.optimizer.step()
-                self.scheduler.step()
+                    self.optimizer.zero_grad(set_to_none=True)
+                    loss.backward()
+                    self.optimizer.step()
+                    self.scheduler.step()
 
-                if self.rank == 0:
-                    now = time.monotonic()
+                    if self.rank == 0:
+                        now = time.monotonic()
 
-                    if now - self.last_print >= 20:
-                        loss_value = loss.item()
-                        self.recent_losses.append(loss_value)
-                        self.recent_losses = self.recent_losses[-5:]
-                        average_loss = sum(self.recent_losses) / len(self.recent_losses)
-                        eta = int((len(self.loader) - step) * (now - self.last_print) / (step - self.last_print_step))
-                        print(f'epoch {epoch + 1} step {step:,} loss {loss_value:.4f} ({average_loss:.2f}) lr {self.scheduler.get_last_lr()[0]:.2e} eta {eta // 3600}h {(eta % 3600) // 60}m')
-                        self.last_print = now
-                        self.last_print_step = step
+                        if now - self.last_print >= 20:
+                            loss_value = loss.item()
+                            self.recent_losses.append(loss_value)
+                            self.recent_losses = self.recent_losses[-5:]
+                            average_loss = sum(self.recent_losses) / len(self.recent_losses)
+                            eta = int((len(self.loader) - step) * (now - self.last_print) / (step - self.last_print_step))
+                            print(f'epoch {epoch + 1} step {step:,} loss {loss_value:.4f} ({average_loss:.2f}) lr {self.scheduler.get_last_lr()[0]:.2e} eta {eta // 3600}h {(eta % 3600) // 60}m')
+                            self.last_print = now
+                            self.last_print_step = step
 
-                        if len(self.recent_losses) == 5 and average_loss < STOP_LOSS:
-                            self.stop.fill_(1)
+                            if len(self.recent_losses) == 5 and average_loss < STOP_LOSS:
+                                self.stop.fill_(1)
 
-                        if now - self.last_save >= 600:
-                            self.save()
-                            self.last_save = now
+                            if now - self.last_save >= 600:
+                                self.save()
+                                self.last_save = now
 
-                if step % 100 == 0:
-                    dist.broadcast(self.stop, src=0)
+                    if step % 100 == 0:
+                        dist.broadcast(self.stop, src=0)
 
-                    if self.stop.item():
-                        break
+                        if self.stop.item():
+                            break
 
         if self.rank == 0:
             self.save()

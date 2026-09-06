@@ -1,10 +1,12 @@
 ''' Train the language model on two CUDA GPUs. '''
 
 import os
+import random
 import sys
 import time
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.distributed as dist
 from torch import nn
@@ -62,21 +64,29 @@ class Trainer:
         self.device = torch.device('cuda', self.local_rank)
         self.rank = dist.get_rank()
 
+    def setup_loader(self):
+        ''' Build the distributed data loader. '''
+        self.sampler = DistributedSampler(self.dataset, shuffle=True, drop_last=True)
+        self.loader = DataLoader(self.dataset, batch_size=self.batch_size, sampler=self.sampler)
+
+    def setup_pretrain_epoch(self, epoch):
+        ''' Shift pretraining window boundaries for each epoch. '''
+        offset = random.Random(epoch).randrange(self.context_length)
+        self.dataset = self.tokens[offset:].unfold(0, self.context_length + 1, self.context_length)
+        self.setup_loader()
+
     def setup_data(self):
         ''' Load and distribute training samples. '''
         if self.stage == 'pretrain':
-            self.tokens = torch.from_file(str(PRETRAIN_DATA_PATH), shared=False, size=PRETRAIN_DATA_PATH.stat().st_size // 2, dtype=torch.uint16)
-            self.sequences = self.tokens.unfold(0, self.context_length + 1, self.context_length)
-            self.dataset = self.sequences
+            self.tokens = torch.from_numpy(np.fromfile(PRETRAIN_DATA_PATH, dtype=np.uint16))
+            self.setup_pretrain_epoch(0)
         else:
             self.tokens = torch.from_file(str(POSTTRAIN_DATA_PATH), shared=False, size=POSTTRAIN_DATA_PATH.stat().st_size // 2, dtype=torch.uint16)
             self.masks = torch.from_file(str(POSTTRAIN_MASK_PATH), shared=False, size=POSTTRAIN_MASK_PATH.stat().st_size, dtype=torch.uint8)
             self.sequences = self.tokens.view(-1, self.context_length + 1)
             self.masks = self.masks.view(-1, self.context_length + 1)
             self.dataset = TensorDataset(self.sequences, self.masks)
-
-        self.sampler = DistributedSampler(self.dataset, shuffle=True, drop_last=True)
-        self.loader = DataLoader(self.dataset, batch_size=self.batch_size, sampler=self.sampler)
+            self.setup_loader()
 
     def setup_training(self):
         ''' Build the model, optimizer, loss, and learning-rate schedule. '''
@@ -128,6 +138,9 @@ class Trainer:
     def train(self):
         ''' Train the language model. '''
         for epoch in range(EPOCHS):
+            if self.stage == 'pretrain' and epoch:
+                self.setup_pretrain_epoch(epoch)
+
             self.sampler.set_epoch(epoch)
 
             for step, batch in enumerate(self.loader):

@@ -1,184 +1,213 @@
-''' Compare promising conversational post-training datasets for TitusAI. '''
+''' Inspect filtered candidates for the expanded TitusAI post-training corpus. '''
 
 import random
+from collections import Counter
 from pathlib import Path
 from statistics import mean, median
 
 from datasets import load_dataset
+from tqdm import tqdm
 from transformers import AutoTokenizer
 
 TOKENIZER_NAME = 'gpt2'
-OUTPUT_PATH = Path('data_investigation/output/posttrain_candidates_report.txt')
-SAMPLE_SIZE = 500
-SAMPLE_CHARACTER_LIMIT = 1200
+OUTPUT_PATH = Path('data_investigation/output/posttrain_expansion_report.txt')
 RANDOM_SEED = 42
+SAMPLES_PER_SOURCE = 15
+SAMPLE_CHARACTER_LIMIT = 1000
+MAX_TOKENS = 512
+MAX_ASSISTANT_TOKENS = 256
 
-CODE_MARKERS = ('```', 'python', 'javascript', 'function', 'code', 'program', 'algorithm', 'class ')
-MATH_MARKERS = ('equation', 'calculate', 'solve', 'theorem', 'proof', 'integral', 'derivative', 'algebra')
-CASUAL_MARKERS = ('hello', 'hi ', 'hey', 'how are you', 'thank you', 'thanks', 'today', 'friend', 'feel', 'weekend', 'dinner', 'movie', 'music')
-
-def percentile(values, fraction):
-    ''' Return a simple percentile from a numeric list. '''
-    values = sorted(values)
-    return values[min(len(values) - 1, int(len(values) * fraction))]
-
-def sample_rows(dataset, count):
-    ''' Select deterministic random rows from a dataset. '''
-    rng = random.Random(RANDOM_SEED)
-    indexes = rng.sample(range(len(dataset)), min(count, len(dataset)))
-    return [dataset[index] for index in indexes]
-
-def analyze_conversations(name, dataset, tokenizer):
-    ''' Summarize a messages-style conversation dataset. '''
-    rows = sample_rows(dataset, SAMPLE_SIZE)
-    token_counts = []
-    assistant_counts = []
-    multi_turn = 0
-    system = 0
-    code_like = 0
-    math_like = 0
-    casual_like = 0
-
-    for row in rows:
-        messages = row['messages']
-        contents = [message['content'] or '' for message in messages]
-        user_text = '\n'.join(message['content'] or '' for message in messages if message['role'] == 'user').lower()
-        assistant_text = '\n'.join(message['content'] or '' for message in messages if message['role'] == 'assistant')
-        text = '\n'.join(contents)
-        token_counts.append(len(tokenizer.encode(text, add_special_tokens=False)))
-        assistant_counts.append(len(tokenizer.encode(assistant_text, add_special_tokens=False)))
-
-        if len(messages) > 2:
-            multi_turn += 1
-        if any(message['role'] == 'system' for message in messages):
-            system += 1
-        if any(marker in user_text for marker in CODE_MARKERS):
-            code_like += 1
-        if any(marker in user_text for marker in MATH_MARKERS):
-            math_like += 1
-        if any(marker in user_text for marker in CASUAL_MARKERS):
-            casual_like += 1
-
-    sampled = len(rows)
-    stats = {
-        'name': name,
-        'rows': len(dataset),
-        'sampled': sampled,
-        'mean': mean(token_counts),
-        'median': median(token_counts),
-        'p95': percentile(token_counts, 0.95),
-        'assistant_mean': mean(assistant_counts),
-        'fit256': sum(value <= 256 for value in token_counts) / sampled,
-        'fit512': sum(value <= 512 for value in token_counts) / sampled,
-        'fit1024': sum(value <= 1024 for value in token_counts) / sampled,
-        'multi_turn': multi_turn / sampled,
-        'system': system / sampled,
-        'code': code_like / sampled,
-        'math': math_like / sampled,
-        'casual': casual_like / sampled,
-    }
-    return stats, rows
+CODE_MARKERS = ('```', 'python', 'javascript', 'write code', 'programming', 'algorithm', 'class ', 'def ')
+MATH_MARKERS = ('equation', 'calculate', 'solve for', 'theorem', 'proof', 'integral', 'derivative', 'algebra', 'geometry problem')
+ROLEPLAY_MARKERS = ('roleplay', 'role-play', 'pretend you are', 'act as ', 'imagine you are', 'you are a wizard')
 
 def build_oasst_conversations(dataset):
-    ''' Build high-quality English human conversation paths from OASST1. '''
+    ''' Build strict English human OASST1 paths ending in top-ranked responses. '''
     by_id = {row['message_id']: row for row in dataset}
     conversations = []
 
     for row in dataset:
         if row['role'] != 'assistant' or row['lang'] != 'en':
             continue
-        if row['deleted'] or not row['review_result'] or row['synthetic']:
-            continue
-        if row['rank'] != 0:
+        if row['deleted'] or not row['review_result'] or row['synthetic'] or row['rank'] != 0:
             continue
 
-        path = []
+        messages = []
         current = row
 
         while current is not None:
             if current['lang'] != 'en' or current['deleted'] or not current['review_result'] or current['synthetic']:
-                path = []
+                messages = []
                 break
-            role = 'user' if current['role'] == 'prompter' else 'assistant'
-            path.append({'role': role, 'content': current['text']})
-            parent_id = current['parent_id']
-            current = by_id.get(parent_id) if parent_id else None
 
-        path.reverse()
-        if len(path) >= 2 and path[-1]['role'] == 'assistant':
-            conversations.append({'messages': path})
+            role = 'user' if current['role'] == 'prompter' else 'assistant'
+            messages.append({'role': role, 'content': current['text']})
+            current = by_id.get(current['parent_id']) if current['parent_id'] else None
+
+        messages.reverse()
+
+        if len(messages) >= 2 and messages[-1]['role'] == 'assistant':
+            conversations.append({'messages': messages})
 
     return conversations
 
-def append_samples(report, name, rows):
-    ''' Add a few representative conversations to the report. '''
-    report.append('')
-    report.append(f'### {name}')
-    positions = sorted(set((0, len(rows) // 4, len(rows) // 2, len(rows) - 1)))
+def inspect_messages(tokenizer, messages, reject_system=True):
+    ''' Return token statistics when a conversation passes the proposed filter. '''
+    roles = [message['role'] for message in messages]
 
-    for position in positions:
-        messages = rows[position]['messages']
-        report.append(f'Sample {position + 1}')
-        for message in messages:
+    if reject_system and 'system' in roles:
+        return None, 'system'
+    if not roles or roles[-1] != 'assistant':
+        return None, 'roles'
+
+    user_text = '\n'.join(message['content'] or '' for message in messages if message['role'] == 'user').lower()
+
+    if any(marker in user_text for marker in CODE_MARKERS):
+        return None, 'code'
+    if any(marker in user_text for marker in MATH_MARKERS):
+        return None, 'math'
+    if any(marker in user_text for marker in ROLEPLAY_MARKERS):
+        return None, 'roleplay'
+
+    contents = [(message['content'] or '').strip() for message in messages]
+
+    if any(not content for content in contents):
+        return None, 'empty'
+
+    token_count = len(tokenizer.encode('\n'.join(contents), add_special_tokens=False))
+
+    if token_count > MAX_TOKENS:
+        return None, 'length'
+
+    assistant_lengths = [
+        len(tokenizer.encode(message['content'], add_special_tokens=False))
+        for message in messages if message['role'] == 'assistant'
+    ]
+
+    if max(assistant_lengths) > MAX_ASSISTANT_TOKENS:
+        return None, 'assistant_length'
+
+    return (token_count, sum(assistant_lengths), len(messages)), None
+
+def inspect_dataset(name, dataset, tokenizer, source=None):
+    ''' Scan one candidate source and keep indexes that pass the proposed filter. '''
+    accepted = []
+    token_counts = []
+    assistant_counts = []
+    turn_counts = []
+    rejected = Counter()
+
+    for index in tqdm(range(len(dataset)), desc=name, unit='rows'):
+        row = dataset[index]
+
+        if source is not None and row['source'] != source:
+            continue
+
+        stats, reason = inspect_messages(tokenizer, row['messages'])
+
+        if reason:
+            rejected[reason] += 1
+            continue
+
+        accepted.append(index)
+        token_count, assistant_count, turns = stats
+        token_counts.append(token_count)
+        assistant_counts.append(assistant_count)
+        turn_counts.append(turns)
+
+    return {
+        'name': name,
+        'dataset': dataset,
+        'source': source,
+        'accepted': accepted,
+        'tokens': token_counts,
+        'assistant_tokens': assistant_counts,
+        'turns': turn_counts,
+        'rejected': rejected,
+    }
+
+def append_summary(report, result):
+    ''' Add source counts and length statistics to the report. '''
+    accepted = len(result['accepted'])
+    rejected = result['rejected']
+    considered = accepted + sum(rejected.values())
+    report.append(f'### {result["name"]}')
+    report.append(f'Considered: {considered:,}')
+    report.append(f'Accepted: {accepted:,} ({accepted / considered:.1%})')
+
+    if accepted:
+        report.append(f'Mean raw tokens: {mean(result["tokens"]):.1f}')
+        report.append(f'Median raw tokens: {median(result["tokens"]):.1f}')
+        report.append(f'Mean assistant tokens: {mean(result["assistant_tokens"]):.1f}')
+        report.append(f'Mean turns: {mean(result["turns"]):.1f}')
+
+    report.append('Rejected: ' + ', '.join(f'{reason}={count:,}' for reason, count in rejected.most_common()))
+    report.append('')
+
+def append_samples(report, result, rng):
+    ''' Add deterministic random samples from a filtered source. '''
+    accepted = result['accepted']
+    dataset = result['dataset']
+    sample_indexes = rng.sample(accepted, min(SAMPLES_PER_SOURCE, len(accepted)))
+    report.append(f'### {result["name"]}')
+
+    for index in sample_indexes:
+        row = dataset[index]
+        report.append(f'Row {index:,}')
+
+        for message in row['messages']:
             content = (message['content'] or '').strip()
             if len(content) > SAMPLE_CHARACTER_LIMIT:
                 content = content[:SAMPLE_CHARACTER_LIMIT] + ' [...]'
             report.append(f'{message["role"].upper()}: {content}')
+
         report.append('')
 
 def main():
-    ''' Compare the strongest researched candidates and write a report. '''
+    ''' Build a concrete report for expanding TitusAI post-training to tens of thousands of examples. '''
     tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_NAME)
+    tokenizer.model_max_length = 1_000_000
+    rng = random.Random(RANDOM_SEED)
 
     print('Loading OpenAssistant/oasst1')
-    oasst = load_dataset('OpenAssistant/oasst1', split='train')
-    oasst_conversations = build_oasst_conversations(oasst)
+    oasst_raw = load_dataset('OpenAssistant/oasst1', split='train')
+    oasst = build_oasst_conversations(oasst_raw)
 
     print('Loading HuggingFaceTB/smoltalk everyday-conversations')
     everyday = load_dataset('HuggingFaceTB/smoltalk', 'everyday-conversations', split='train')
 
-    print('Loading HuggingFaceTB/smoltalk systemchats-30k')
-    systemchats = load_dataset('HuggingFaceTB/smoltalk', 'systemchats-30k', split='train')
+    print('Loading cached HuggingFaceTB/smol-smoltalk train split')
+    smol = load_dataset('HuggingFaceTB/smol-smoltalk', split='train')
 
-    candidates = [
-        ('OASST1 human English top-ranked paths', oasst_conversations),
-        ('SmolTalk everyday-conversations', everyday),
-        ('SmolTalk systemchats-30k', systemchats),
+    results = [
+        inspect_dataset('OASST1 strict human paths', oasst, tokenizer),
+        inspect_dataset('SmolTalk everyday-conversations', everyday, tokenizer),
+        inspect_dataset('Smol-SmolTalk short Magpie', smol, tokenizer, 'smol-magpie-ultra-short'),
+        inspect_dataset('Smol-SmolTalk OpenHermes', smol, tokenizer, 'openhermes-50k'),
+        inspect_dataset('Smol-SmolTalk explore-instruct-rewrite', smol, tokenizer, 'explore-instruct-rewrite'),
     ]
 
     report = []
-    report.append('TitusAI post-training candidate investigation')
-    report.append('============================================')
-    report.append('OASST1 is restricted here to English, human-written, reviewed, non-deleted, non-synthetic paths ending in a rank-0 assistant response.')
-    report.append(f'Raw OASST1 train messages: {len(oasst):,}')
-    report.append(f'Usable OASST1 conversation paths under that strict filter: {len(oasst_conversations):,}')
-    report.append('SmolTalk configs are loaded separately; the full 4.15 GB SmolTalk mixture is not downloaded.')
-    report.append('Token counts use GPT-2 BPE on raw message content and exclude future Titus role labels/separators/EOS.')
-    report.append('Keyword category rates are rough screening signals, not semantic classifiers.')
+    report.append('TitusAI expanded post-training investigation')
+    report.append('===========================================')
+    report.append(f'Proposed screening: <= {MAX_TOKENS} raw GPT-2 tokens, each assistant turn <= {MAX_ASSISTANT_TOKENS} tokens, no system messages, and no obvious code, advanced-math, or roleplay prompts.')
+    report.append('These are screening heuristics for choosing the final mixture, not the final prepare_data.py implementation.')
     report.append('')
-    report.append('Candidate comparison')
-    report.append('--------------------')
-    report.append('candidate | rows | sampled | mean tokens | median | p95 | assistant mean | <=256 | <=512 | <=1024 | multi-turn | system | code-like | math-like | casual-like')
+    report.append('Filtered source sizes')
+    report.append('---------------------')
 
-    sampled_rows = {}
+    for result in results:
+        append_summary(report, result)
 
-    for name, dataset in candidates:
-        print(f'Analyzing {name}: {len(dataset):,} rows')
-        stats, rows = analyze_conversations(name, dataset, tokenizer)
-        sampled_rows[name] = rows
-        report.append(
-            f'{name} | {stats["rows"]:,} | {stats["sampled"]} | {stats["mean"]:.1f} | {stats["median"]:.1f} | '
-            f'{stats["p95"]:,} | {stats["assistant_mean"]:.1f} | {stats["fit256"]:.1%} | {stats["fit512"]:.1%} | '
-            f'{stats["fit1024"]:.1%} | {stats["multi_turn"]:.1%} | {stats["system"]:.1%} | {stats["code"]:.1%} | '
-            f'{stats["math"]:.1%} | {stats["casual"]:.1%}'
-        )
-
+    total = sum(len(result['accepted']) for result in results)
+    report.append(f'Total accepted across all sources before deduplication/capping: {total:,}')
     report.append('')
-    report.append('Representative conversations')
-    report.append('----------------------------')
+    report.append('Random surviving examples')
+    report.append('-------------------------')
+    report.append('')
 
-    for name, _ in candidates:
-        append_samples(report, name, sampled_rows[name])
+    for result in results:
+        append_samples(report, result, rng)
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_PATH.write_text('\n'.join(report))

@@ -50,7 +50,7 @@ class Trainer:
             print(f'Training samples: {len(self.dataset):,}')
 
         self.last_print = time.monotonic()
-        self.last_print_step = 0
+        self.last_print_step = -1
         self.last_save = self.last_print
         self.recent_losses = []
         self.stop = torch.zeros(1, device=self.device, dtype=torch.uint8)
@@ -151,6 +151,10 @@ class Trainer:
 
                 self.sampler.set_epoch(epoch)
 
+                if self.rank == 0:
+                    self.last_print = time.monotonic()
+                    self.last_print_step = -1
+
                 for step, batch in enumerate(self.loader):
                     inputs, targets = self.prepare_batch(batch)
 
@@ -171,8 +175,8 @@ class Trainer:
                             self.recent_losses.append(loss_value)
                             self.recent_losses = self.recent_losses[-5:]
                             average_loss = sum(self.recent_losses) / len(self.recent_losses)
-                            eta = int((len(self.loader) - step) * (now - self.last_print) / (step - self.last_print_step))
-                            print(f'epoch {epoch + 1} step {step:,} loss {loss_value:.4f} ({average_loss:.2f}) lr {self.scheduler.get_last_lr()[0]:.2e} eta {eta // 3600}h {(eta % 3600) // 60}m')
+                            eta = int((len(self.loader) - step - 1) * (now - self.last_print) / (step - self.last_print_step))
+                            print(f'epoch {epoch + 1} step {step:,} loss {loss_value:.4f} ({average_loss:.2f}) lr {self.scheduler.get_last_lr()[0]:.2e} eta {eta}s')
                             self.last_print = now
                             self.last_print_step = step
 

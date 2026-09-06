@@ -4,6 +4,7 @@ __pycache__/
 weights/*.pt
 data.bin
 *.bin
+data/
 data_investigation/data/
 data_investigation/output/
 data_investigation/pretrain_corpus/

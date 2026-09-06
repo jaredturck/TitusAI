@@ -36,7 +36,7 @@ SOURCES = (
     },
     {
         'name': 'cosmopedia_v2',
-        'label': 'Cosmopedia v2 middle-school textbooks',
+        'label': 'Cosmopedia v2',
         'dataset': 'HuggingFaceTB/smollm-corpus',
         'path_prefix': 'cosmopedia-v2/',
         'target_tokens': 115_000_000,
@@ -44,7 +44,7 @@ SOURCES = (
     },
     {
         'name': 'tinystories_v2',
-        'label': 'TinyStories V2 GPT-4',
+        'label': 'TinyStories V2',
         'dataset': 'maveriq/tinystoriesv2_gpt4',
         'path_prefix': 'data/train-',
         'target_tokens': 46_000_000,
@@ -88,13 +88,13 @@ def get_source_files(source):
     return files
 
 
-def get_local_shard(source, filename):
+def get_local_shard(source, filename, checkpoint):
     local_path = DATA_PATH / source['name'] / filename
 
     if local_path.exists():
         return local_path
 
-    print(f'Downloading {source["label"]}: {filename}')
+    tqdm.write(f'Downloading {source["label"]} checkpoint {checkpoint}...')
     return Path(hf_hub_download(
         repo_id=source['dataset'],
         filename=filename,
@@ -160,14 +160,16 @@ def write_documents(file, documents, remaining_tokens):
 def build_source(source, file, pool):
     target_tokens = source['target_tokens']
     source_tokens = 0
-    progress = tqdm(total=target_tokens, desc=source['name'], unit='tok', unit_scale=True)
+    checkpoint_count = 0
+    progress = tqdm(total=target_tokens, desc=source['label'], unit='tok', unit_scale=True)
 
     for shard_index, filename in enumerate(get_source_files(source)):
         if source_tokens == target_tokens:
             break
 
-        shard_path = get_local_shard(source, filename)
-        print(f'Processing {filename} ({shard_path.stat().st_size / 1024 ** 3:.2f} GiB)')
+        checkpoint_count += 1
+        progress.set_description(f'{source["label"]} checkpoint {checkpoint_count}')
+        shard_path = get_local_shard(source, filename, checkpoint_count)
         parquet = pq.ParquetFile(shard_path)
         random_generator = random.Random(SEED + shard_index + 10_000 * (SOURCES.index(source) + 1))
 
@@ -192,6 +194,7 @@ def build_source(source, file, pool):
                 break
 
     progress.close()
+    print(f'{source["label"]} complete: {checkpoint_count} checkpoints processed')
 
     if source_tokens != target_tokens:
         raise RuntimeError(f'{source["label"]} produced {source_tokens:,} / {target_tokens:,} tokens.')
@@ -203,8 +206,6 @@ def main():
 
     DATA_PATH.mkdir(parents=True, exist_ok=True)
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path = OUTPUT_PATH.with_suffix('.bin.tmp')
-    temporary_path.unlink(missing_ok=True)
     AutoTokenizer.from_pretrained(TOKENIZER_NAME)
     context = multiprocessing.get_context('spawn')
 
@@ -212,16 +213,10 @@ def main():
     print(f'Final corpus: {TOTAL_TOKENS:,} uint16 tokens ({TOTAL_TOKENS * 2 / 1024 ** 3:.2f} GiB)')
 
     with context.Pool(WORKER_COUNT, initializer=initialize_worker) as pool:
-        with temporary_path.open('wb') as file:
+        with OUTPUT_PATH.open('wb') as file:
             for source in SOURCES:
                 build_source(source, file, pool)
 
-    expected_bytes = TOTAL_TOKENS * 2
-
-    if temporary_path.stat().st_size != expected_bytes:
-        raise RuntimeError(f'Corpus is {temporary_path.stat().st_size:,} bytes, expected {expected_bytes:,}.')
-
-    temporary_path.replace(OUTPUT_PATH)
     print(f'Wrote {OUTPUT_PATH}')
 
 

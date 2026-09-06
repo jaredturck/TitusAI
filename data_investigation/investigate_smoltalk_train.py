@@ -1,4 +1,4 @@
-''' Inspect filtered candidates for the expanded TitusAI post-training corpus. '''
+''' Inspect UltraChat 200k as the final TitusAI post-training expansion candidate. '''
 
 import random
 from collections import Counter
@@ -10,69 +10,42 @@ from tqdm import tqdm
 from transformers import AutoTokenizer
 
 TOKENIZER_NAME = 'gpt2'
-OUTPUT_PATH = Path('data_investigation/output/posttrain_expansion_report.txt')
+OUTPUT_PATH = Path('data_investigation/output/posttrain_ultrachat_report.txt')
 RANDOM_SEED = 42
-SAMPLES_PER_SOURCE = 15
+SAMPLE_COUNT = 30
 SAMPLE_CHARACTER_LIMIT = 1000
 MAX_TOKENS = 512
 MAX_ASSISTANT_TOKENS = 256
 
 CODE_MARKERS = ('```', 'python', 'javascript', 'write code', 'programming', 'algorithm', 'class ', 'def ')
-MATH_MARKERS = ('equation', 'calculate', 'solve for', 'theorem', 'proof', 'integral', 'derivative', 'algebra', 'geometry problem')
-ROLEPLAY_MARKERS = ('roleplay', 'role-play', 'pretend you are', 'act as ', 'imagine you are', 'you are a wizard')
+ADVANCED_MATH_MARKERS = ('theorem', 'proof', 'integral', 'derivative', 'differential equation', 'linear algebra', 'calculus')
+ROLEPLAY_MARKERS = ('roleplay', 'role-play', 'pretend you are', 'act as ', 'imagine you are', 'you are a wizard', 'be my girlfriend', 'be my boyfriend')
 
-def build_oasst_conversations(dataset):
-    ''' Build strict English human OASST1 paths ending in top-ranked responses. '''
-    by_id = {row['message_id']: row for row in dataset}
-    conversations = []
-
-    for row in dataset:
-        if row['role'] != 'assistant' or row['lang'] != 'en':
-            continue
-        if row['deleted'] or not row['review_result'] or row['synthetic'] or row['rank'] != 0:
-            continue
-
-        messages = []
-        current = row
-
-        while current is not None:
-            if current['lang'] != 'en' or current['deleted'] or not current['review_result'] or current['synthetic']:
-                messages = []
-                break
-
-            role = 'user' if current['role'] == 'prompter' else 'assistant'
-            messages.append({'role': role, 'content': current['text']})
-            current = by_id.get(current['parent_id']) if current['parent_id'] else None
-
-        messages.reverse()
-
-        if len(messages) >= 2 and messages[-1]['role'] == 'assistant':
-            conversations.append({'messages': messages})
-
-    return conversations
-
-def inspect_messages(tokenizer, messages, reject_system=True):
-    ''' Return token statistics when a conversation passes the proposed filter. '''
+def inspect_messages(tokenizer, messages):
+    ''' Return token statistics when an UltraChat conversation passes the screen. '''
     roles = [message['role'] for message in messages]
 
-    if reject_system and 'system' in roles:
+    if 'system' in roles:
         return None, 'system'
     if not roles or roles[-1] != 'assistant':
         return None, 'roles'
-
-    user_text = '\n'.join(message['content'] or '' for message in messages if message['role'] == 'user').lower()
-
-    if any(marker in user_text for marker in CODE_MARKERS):
-        return None, 'code'
-    if any(marker in user_text for marker in MATH_MARKERS):
-        return None, 'math'
-    if any(marker in user_text for marker in ROLEPLAY_MARKERS):
-        return None, 'roleplay'
+    if any(role not in ('user', 'assistant') for role in roles):
+        return None, 'roles'
 
     contents = [(message['content'] or '').strip() for message in messages]
 
     if any(not content for content in contents):
         return None, 'empty'
+
+    user_text = '\n'.join(message['content'] or '' for message in messages if message['role'] == 'user').lower()
+    all_text = '\n'.join(contents).lower()
+
+    if any(marker in all_text for marker in CODE_MARKERS):
+        return None, 'code'
+    if any(marker in user_text for marker in ADVANCED_MATH_MARKERS):
+        return None, 'advanced_math'
+    if any(marker in user_text for marker in ROLEPLAY_MARKERS):
+        return None, 'roleplay'
 
     token_count = len(tokenizer.encode('\n'.join(contents), add_special_tokens=False))
 
@@ -89,125 +62,69 @@ def inspect_messages(tokenizer, messages, reject_system=True):
 
     return (token_count, sum(assistant_lengths), len(messages)), None
 
-def inspect_dataset(name, dataset, tokenizer, source=None):
-    ''' Scan one candidate source and keep indexes that pass the proposed filter. '''
-    accepted = []
+def main():
+    ''' Scan UltraChat train_sft and write exact survivor counts and random samples. '''
+    tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_NAME)
+    tokenizer.model_max_length = 1_000_000
+    dataset = load_dataset('HuggingFaceH4/ultrachat_200k', split='train_sft', streaming=True)
+    rng = random.Random(RANDOM_SEED)
+    rejected = Counter()
     token_counts = []
     assistant_counts = []
     turn_counts = []
-    rejected = Counter()
+    samples = []
+    considered = 0
+    accepted = 0
 
-    for index in tqdm(range(len(dataset)), desc=name, unit='rows'):
-        row = dataset[index]
+    print('Streaming HuggingFaceH4/ultrachat_200k train_sft')
 
-        if source is not None and row['source'] != source:
-            continue
-
+    for row in tqdm(dataset, total=207_865, desc='UltraChat', unit='rows'):
+        considered += 1
         stats, reason = inspect_messages(tokenizer, row['messages'])
 
         if reason:
             rejected[reason] += 1
             continue
 
-        accepted.append(index)
+        accepted += 1
         token_count, assistant_count, turns = stats
         token_counts.append(token_count)
         assistant_counts.append(assistant_count)
         turn_counts.append(turns)
 
-    return {
-        'name': name,
-        'dataset': dataset,
-        'source': source,
-        'accepted': accepted,
-        'tokens': token_counts,
-        'assistant_tokens': assistant_counts,
-        'turns': turn_counts,
-        'rejected': rejected,
-    }
+        if len(samples) < SAMPLE_COUNT:
+            samples.append(row['messages'])
+        else:
+            slot = rng.randrange(accepted)
+            if slot < SAMPLE_COUNT:
+                samples[slot] = row['messages']
 
-def append_summary(report, result):
-    ''' Add source counts and length statistics to the report. '''
-    accepted = len(result['accepted'])
-    rejected = result['rejected']
-    considered = accepted + sum(rejected.values())
-    report.append(f'### {result["name"]}')
+    report = []
+    report.append('TitusAI UltraChat post-training investigation')
+    report.append('============================================')
+    report.append(f'Screening: <= {MAX_TOKENS} raw GPT-2 tokens, each assistant turn <= {MAX_ASSISTANT_TOKENS} tokens, no system messages, obvious code, advanced math, or roleplay prompts.')
+    report.append('UltraChat 200k train_sft is streamed rather than permanently downloading the full dataset.')
+    report.append('')
     report.append(f'Considered: {considered:,}')
     report.append(f'Accepted: {accepted:,} ({accepted / considered:.1%})')
-
-    if accepted:
-        report.append(f'Mean raw tokens: {mean(result["tokens"]):.1f}')
-        report.append(f'Median raw tokens: {median(result["tokens"]):.1f}')
-        report.append(f'Mean assistant tokens: {mean(result["assistant_tokens"]):.1f}')
-        report.append(f'Mean turns: {mean(result["turns"]):.1f}')
-
+    report.append(f'Mean raw tokens: {mean(token_counts):.1f}')
+    report.append(f'Median raw tokens: {median(token_counts):.1f}')
+    report.append(f'Mean assistant tokens: {mean(assistant_counts):.1f}')
+    report.append(f'Mean turns: {mean(turn_counts):.1f}')
     report.append('Rejected: ' + ', '.join(f'{reason}={count:,}' for reason, count in rejected.most_common()))
     report.append('')
+    report.append('Random surviving examples')
+    report.append('-------------------------')
 
-def append_samples(report, result, rng):
-    ''' Add deterministic random samples from a filtered source. '''
-    accepted = result['accepted']
-    dataset = result['dataset']
-    sample_indexes = rng.sample(accepted, min(SAMPLES_PER_SOURCE, len(accepted)))
-    report.append(f'### {result["name"]}')
+    for number, messages in enumerate(samples, 1):
+        report.append('')
+        report.append(f'Sample {number}')
 
-    for index in sample_indexes:
-        row = dataset[index]
-        report.append(f'Row {index:,}')
-
-        for message in row['messages']:
+        for message in messages:
             content = (message['content'] or '').strip()
             if len(content) > SAMPLE_CHARACTER_LIMIT:
                 content = content[:SAMPLE_CHARACTER_LIMIT] + ' [...]'
             report.append(f'{message["role"].upper()}: {content}')
-
-        report.append('')
-
-def main():
-    ''' Build a concrete report for expanding TitusAI post-training to tens of thousands of examples. '''
-    tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_NAME)
-    tokenizer.model_max_length = 1_000_000
-    rng = random.Random(RANDOM_SEED)
-
-    print('Loading OpenAssistant/oasst1')
-    oasst_raw = load_dataset('OpenAssistant/oasst1', split='train')
-    oasst = build_oasst_conversations(oasst_raw)
-
-    print('Loading HuggingFaceTB/smoltalk everyday-conversations')
-    everyday = load_dataset('HuggingFaceTB/smoltalk', 'everyday-conversations', split='train')
-
-    print('Loading cached HuggingFaceTB/smol-smoltalk train split')
-    smol = load_dataset('HuggingFaceTB/smol-smoltalk', split='train')
-
-    results = [
-        inspect_dataset('OASST1 strict human paths', oasst, tokenizer),
-        inspect_dataset('SmolTalk everyday-conversations', everyday, tokenizer),
-        inspect_dataset('Smol-SmolTalk short Magpie', smol, tokenizer, 'smol-magpie-ultra-short'),
-        inspect_dataset('Smol-SmolTalk OpenHermes', smol, tokenizer, 'openhermes-50k'),
-        inspect_dataset('Smol-SmolTalk explore-instruct-rewrite', smol, tokenizer, 'explore-instruct-rewrite'),
-    ]
-
-    report = []
-    report.append('TitusAI expanded post-training investigation')
-    report.append('===========================================')
-    report.append(f'Proposed screening: <= {MAX_TOKENS} raw GPT-2 tokens, each assistant turn <= {MAX_ASSISTANT_TOKENS} tokens, no system messages, and no obvious code, advanced-math, or roleplay prompts.')
-    report.append('These are screening heuristics for choosing the final mixture, not the final prepare_data.py implementation.')
-    report.append('')
-    report.append('Filtered source sizes')
-    report.append('---------------------')
-
-    for result in results:
-        append_summary(report, result)
-
-    total = sum(len(result['accepted']) for result in results)
-    report.append(f'Total accepted across all sources before deduplication/capping: {total:,}')
-    report.append('')
-    report.append('Random surviving examples')
-    report.append('-------------------------')
-    report.append('')
-
-    for result in results:
-        append_samples(report, result, rng)
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_PATH.write_text('\n'.join(report))

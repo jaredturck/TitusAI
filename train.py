@@ -92,7 +92,11 @@ class Trainer:
     def setup_training(self):
         ''' Build the model, optimizer, loss, and learning-rate schedule. '''
         model = LanguageModel()
-        checkpoints = sorted(WEIGHTS_PATH.glob('*.pt'), key=lambda path: path.stat().st_mtime)
+
+        if self.stage == 'posttrain':
+            checkpoints = sorted(WEIGHTS_PATH.glob('model_*.pt'), key=lambda path: path.stat().st_mtime)
+        else:
+            checkpoints = sorted(WEIGHTS_PATH.glob('*.pt'), key=lambda path: path.stat().st_mtime)
 
         if checkpoints:
             # Every run intentionally warm-starts model weights while creating a fresh optimizer and schedule.

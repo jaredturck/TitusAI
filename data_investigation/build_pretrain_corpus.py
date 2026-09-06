@@ -14,11 +14,7 @@ MAX_DOCUMENT_TOKENS = 512
 EOS_TOKEN_ID = 50256
 
 DATASETS = {
-    FINEWEB_REPO: (
-        299_000_000,
-        'data/train-{:05d}-of-00100.parquet',
-        [42, 41, 91, 9, 65, 50, 1, 70, 15, 78, 73, 10, 55, 56, 72, 45, 48, 92, 76, 37, 30, 21, 32, 96, 80]
-    ),
+    FINEWEB_REPO: (299_000_000, 'data/train-{:05d}-of-00100.parquet', [42,41,91,9,65,50,1,70,15,78,73,10,55,56,72,45,48,92,76,37,30,21,32,96,80]),
     COSMOPEDIA_REPO: (115_000_000, 'cosmopedia-v2/train-{:05d}-of-00104.parquet', [84, 0, 80, 45]),
     TINYSTORIES_REPO: (46_000_000, 'data/train-{:05d}-of-00005.parquet', [2, 1]),
 }

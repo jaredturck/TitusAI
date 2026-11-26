@@ -1,7 +1,0 @@
-torch
-datasets
-transformers
-huggingface_hub
-pyarrow
-numpy
-tqdm

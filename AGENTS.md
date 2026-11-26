@@ -1,0 +1,2 @@
+- Write Python without type hints.
+- Include a docstring on every class and every method.

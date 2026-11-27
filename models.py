@@ -13,7 +13,7 @@ class TitusAI(nn.Module):
         self.position_embedding = nn.Embedding(512, 384)
 
         self.transformer = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(d_model=384, nhead=6, dim_feedforward=1536, activation="gelu", batch_first=True),
+            nn.TransformerEncoderLayer(d_model=384, nhead=6, dim_feedforward=1536, dropout=0.0, activation="gelu", batch_first=True),
             num_layers=6,
         )
 

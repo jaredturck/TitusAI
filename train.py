@@ -1,3 +1,5 @@
+import argparse
+import json
 import os
 import sqlite3
 from contextlib import closing
@@ -7,8 +9,9 @@ import torch
 import torch.distributed as dist
 from torch.nn.functional import cross_entropy
 from torch.nn.parallel import DistributedDataParallel
+from torch.nn.utils.rnn import pad_sequence
 from torch.optim import AdamW
-from torch.utils.data import BatchSampler, DataLoader, Dataset, RandomSampler
+from torch.utils.data import BatchSampler, DataLoader, Dataset, DistributedSampler, RandomSampler
 from tqdm import tqdm
 from models import TitusAI
 
@@ -37,7 +40,7 @@ class TokenWindows(Dataset):
         return self.tokens[torch.as_tensor(starts)[..., None] + self.offsets]
 
 def train():
-    '''Train TitusAI across GPUs and save its BF16 weights.'''
+    '''Pretrain TitusAI and then fine-tune it on assistant replies.'''
     device = torch.device("cuda", int(os.environ["LOCAL_RANK"]))
     torch.cuda.set_device(device)
     dist.init_process_group("nccl", device_id=device)
@@ -50,10 +53,12 @@ def train():
     batches = DataLoader(dataset, batch_size=None, sampler=batch_sampler, pin_memory=True)
 
     model = TitusAI().to(device=device, dtype=torch.bfloat16)
+    if os.path.isfile("model.pt"):
+        model.load_state_dict(torch.load("model.pt", map_location="cpu"))
     model = DistributedDataParallel(model, device_ids=[device.index])
     optimizer = AdamW(model.parameters(), lr=3e-4, fused=True)
 
-    progress = tqdm(batches, desc="Training", unit="batch", disable=rank != 0)
+    progress = tqdm(batches, desc="Pretraining", unit="batch", disable=rank != 0)
     last_report = monotonic()
     for windows in progress:
         windows = windows.to(device=device, dtype=torch.long, non_blocking=True)
@@ -66,13 +71,68 @@ def train():
         loss.backward()
         optimizer.step()
 
-        if rank == 0 and monotonic() - last_report >= 10:
+        if rank == 0 and monotonic() - last_report >= 5:
             progress.set_postfix(loss=f"{loss.item():.4f}")
             last_report = monotonic()
 
     if rank == 0:
-        torch.save(model.module.state_dict(), "titusai.pt")
+        torch.save(model.module.state_dict(), "model.pt")
+
+    del dataset, sampler, batch_sampler, batches, progress
+    dataset = ChatDataset()
+    sampler = DistributedSampler(dataset)
+    batches = DataLoader(dataset, batch_size=32, sampler=sampler, pin_memory=True, collate_fn=pad_chat_batch)
+    optimizer = AdamW(model.parameters(), lr=1e-4, fused=True)
+
+    progress = tqdm(batches, desc="Fine-tuning", unit="batch", disable=rank != 0)
+    last_report = monotonic()
+    for inputs, targets in progress:
+        inputs = inputs.to(device=device, dtype=torch.long, non_blocking=True)
+        targets = targets.to(device=device, dtype=torch.long, non_blocking=True)
+        optimizer.zero_grad()
+
+        logits = model(inputs)
+        loss = cross_entropy(logits.flatten(0, 1).float(), targets.flatten())
+        loss.backward()
+        optimizer.step()
+
+        if rank == 0 and monotonic() - last_report >= 5:
+            progress.set_postfix(loss=f"{loss.item():.4f}")
+            last_report = monotonic()
+
+    if rank == 0:
+        torch.save(model.module.state_dict(), "titusai-finetuned.pt")
+
     dist.destroy_process_group()
 
+class ChatDataset(Dataset):
+    '''Load tokenized conversations and their assistant reply targets.'''
+
+    def __init__(self):
+        '''Read post-training conversations from SQLite.'''
+        self.examples = []
+        with closing(sqlite3.connect("file:datasets.sqlite?mode=ro", uri=True)) as database:
+            rows = database.execute("SELECT token_ids, source_metadata FROM passages WHERE stage = 'posttrain' ORDER BY id")
+            for token_ids, metadata in rows:
+                tokens = torch.frombuffer(bytearray(token_ids), dtype=torch.int16)
+                targets = torch.full_like(tokens, -100)
+                for start, end in json.loads(metadata)["assistant_spans"]:
+                    targets[start:end] = tokens[start:end]
+                self.examples.append((tokens[:-1], targets[1:]))
+
+    def __len__(self):
+        '''Return the number of conversations.'''
+        return len(self.examples)
+
+    def __getitem__(self, index):
+        '''Return one conversation and its next-token targets.'''
+        return self.examples[index]
+
+def pad_chat_batch(examples):
+    '''Right-pad the conversations and ignore padded loss positions.'''
+    inputs, targets = zip(*examples)
+    return pad_sequence(inputs, batch_first=True, padding_value=3), pad_sequence(targets, batch_first=True, padding_value=-100)
+
 if __name__ == "__main__":
+    argparse.ArgumentParser().parse_args()
     train()

@@ -46,13 +46,13 @@ class LastTokenProjection(nn.Module):
         return self.projection(hidden[:, -1])
 
 def export_model():
-    '''Export the fine-tuned checkpoint and its tokenizer for ONNX Runtime Web.'''
+    '''Quantize model.pt and export its tokenizer for ONNX Runtime Web.'''
     assets = Path("frontend/public/model")
     with closing(sqlite3.connect("file:datasets.sqlite?mode=ro", uri=True)) as database:
         tokenizer = database.execute("SELECT value FROM build_info WHERE key = 'tokenizer'").fetchone()[0]
 
     model = TitusAI()
-    model.load_state_dict(torch.load("titusai-finetuned.pt", map_location="cpu"))
+    model.load_state_dict(torch.load("model.pt", map_location="cpu"))
     for layer in model.transformer.layers:
         layer.self_attn = ExportAttention(layer.self_attn)
     model.output = LastTokenProjection(model.output)

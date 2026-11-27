@@ -76,36 +76,40 @@ def train():
         torch.save(model.module.state_dict(), "model.pt")
 
     del dataset, sampler, batch_sampler, batches, progress
-    dataset = ChatDataset()
+    dataset = FineTuneDataset()
     sampler = DistributedSampler(dataset, num_replicas=2, rank=rank)
-    batches = DataLoader(dataset, batch_size=32, sampler=sampler, pin_memory=True, collate_fn=pad_chat_batch)
+    batches = DataLoader(dataset, batch_size=32, sampler=sampler, pin_memory=True, collate_fn=pad_finetune_batch)
     optimizer = AdamW(model.parameters(), lr=1e-4, fused=True)
 
-    progress = tqdm(batches, desc="Fine-tuning", unit="batch", disable=rank != 0)
     last_report = monotonic()
-    for inputs, targets in progress:
-        inputs = inputs.to(device=device, dtype=torch.long, non_blocking=True)
-        targets = targets.to(device=device, dtype=torch.long, non_blocking=True)
-        optimizer.zero_grad()
+    for epoch in range(5):
+        sampler.set_epoch(epoch)
+        progress = tqdm(batches, desc=f"Fine-tuning {epoch + 1}/5", unit="batch", disable=rank != 0)
+        for inputs, targets, weights in progress:
+            inputs = inputs.to(device=device, dtype=torch.long, non_blocking=True)
+            targets = targets.to(device=device, dtype=torch.long, non_blocking=True)
+            weights = weights.to(device=device, non_blocking=True)
+            optimizer.zero_grad()
 
-        loss = cross_entropy(model(inputs).flatten(0, 1).float(), targets.flatten())
-        loss.backward()
-        optimizer.step()
+            losses = cross_entropy(model(inputs).flatten(0, 1).float(), targets, reduction="none")
+            loss = (losses * weights).sum()
+            loss.backward()
+            optimizer.step()
 
-        if rank == 0 and monotonic() - last_report >= 5:
-            progress.set_postfix(loss=f"{loss.item():.4f}")
-            last_report = monotonic()
+            if rank == 0 and monotonic() - last_report >= 5:
+                progress.set_postfix(loss=f"{loss.item():.4f}")
+                last_report = monotonic()
 
     if rank == 0:
-        torch.save(model.module.state_dict(), "titusai-finetuned.pt")
+        torch.save(model.module.state_dict(), "model.pt")
 
     dist.destroy_process_group()
 
-class ChatDataset(Dataset):
-    '''Load tokenized conversations and their assistant reply targets.'''
+class FineTuneDataset(Dataset):
+    '''Load conversations and retained pretraining passages for fine-tuning.'''
 
     def __init__(self):
-        '''Read post-training conversations from SQLite.'''
+        '''Read chat targets and next-token replay targets from SQLite.'''
         self.examples = []
         with closing(sqlite3.connect("file:datasets.sqlite?mode=ro", uri=True)) as database:
             rows = database.execute("SELECT token_ids, source_metadata FROM passages WHERE stage = 'posttrain' ORDER BY id")
@@ -114,20 +118,30 @@ class ChatDataset(Dataset):
                 targets = torch.full_like(tokens, -100)
                 for start, end in json.loads(metadata)["assistant_spans"]:
                     targets[start:end] = tokens[start:end]
-                self.examples.append((tokens[:-1], targets[1:]))
+                self.examples.append((tokens[:-1], targets[1:], 1.0))
+
+            metadata = database.execute("SELECT value FROM build_info WHERE key = 'posttraining_replay'").fetchone()[0]
+            replay_weight = json.loads(metadata)["loss_weight"]
+            rows = database.execute("SELECT p.token_ids FROM posttrain_replay r JOIN passages p ON p.id = r.passage_id ORDER BY r.passage_id")
+            for (token_ids,) in rows:
+                tokens = torch.frombuffer(bytearray(token_ids), dtype=torch.int16)
+                self.examples.append((tokens[:-1], tokens[1:], replay_weight))
 
     def __len__(self):
-        '''Return the number of conversations.'''
+        '''Return the number of fine-tuning examples.'''
         return len(self.examples)
 
     def __getitem__(self, index):
-        '''Return one conversation and its next-token targets.'''
+        '''Return an example with its targets and loss weight.'''
         return self.examples[index]
 
-def pad_chat_batch(examples):
-    '''Right-pad the conversations and ignore padded loss positions.'''
-    inputs, targets = zip(*examples)
-    return pad_sequence(inputs, batch_first=True, padding_value=3), pad_sequence(targets, batch_first=True, padding_value=-100)
+def pad_finetune_batch(examples):
+    '''Right-pad the batch and normalize weights over supervised tokens.'''
+    inputs, targets, weights = zip(*examples)
+    inputs = pad_sequence(inputs, batch_first=True, padding_value=3)
+    targets = pad_sequence(targets, batch_first=True, padding_value=-100)
+    weights = (torch.tensor(weights)[:, None] * (targets != -100)).flatten()
+    return inputs, targets.flatten(), weights / weights.sum()
 
 if __name__ == "__main__":
     train()

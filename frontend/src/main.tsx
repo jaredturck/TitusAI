@@ -2,12 +2,14 @@ import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
-  ArrowUp, ArrowUpRight, Asterisk, Braces, Cpu, Database, Layers3, LockKeyhole,
-  MessageCircle, Plus, Sparkles, Square,
+  ArrowUpRight, Braces, Copy, Cpu, Database, Ellipsis, Github, Layers3,
+  LockKeyhole, MessageCircle, Sparkles, Square, SquarePen,
 } from 'lucide-react'
 import type { ChatRequest, ChatUpdate, Turn } from './chat'
 import '@fontsource-variable/dm-sans'
-import '@fontsource/ibm-plex-mono/500.css'
+import '@fontsource/ibm-plex-mono/latin-500.css'
+import '@fontsource/instrument-serif/latin-400.css'
+import '@fontsource/instrument-serif/latin-400-italic.css'
 import './style.css'
 
 const stats = [
@@ -23,54 +25,71 @@ const suggestions = [
   { text: 'Recommend a movie', Icon: ArrowUpRight },
 ]
 
-function Mark({ className = '' }: { className?: string }) {
-  return <span className={'mark ' + className} aria-hidden="true"><Asterisk size="65%" strokeWidth={2.6} /></span>
+const assets = import.meta.env.BASE_URL
+const clock = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
+
+type ChatTurn = Turn & { sentAt: number; repliedAt?: number }
+
+function Avatar({ className = '' }: { className?: string }) {
+  return <img className={'avatar ' + className} src={assets + 'titus-avatar.webp'} alt="" />
 }
 
-function ModelInfo() {
-  return (
-    <aside className="grid min-w-0 gap-4" aria-label="About the model">
-      <section className="hero relative isolate overflow-hidden rounded-[24px]">
-        <img className="hero-art" src={import.meta.env.BASE_URL + 'model-art.webp'} alt="" />
-        <div className="hero-copy relative">
-          <p className="eyebrow mb-4 flex items-center gap-2.5"><span className="hero-pip" />TITUSAI MODEL</p>
-          <h1>Small model.<br /><em>Real conversation.</em></h1>
-          <p className="hero-description mt-4">
-            A tiny language model trained from scratch for short, everyday conversations.
-          </p>
-        </div>
-      </section>
+function Timestamp({ value }: { value: number }) {
+  const time = new Date(value)
+  return <time className="timestamp" dateTime={time.toISOString()}>{clock.format(time)}</time>
+}
 
-      <section className="specs panel rounded-[24px]" aria-labelledby="specs-heading">
-        <div className="px-5 pb-3.5 pt-5 sm:px-6">
-          <h2 id="specs-heading" className="text-[20px] font-bold tracking-[-.04em]">Inside the model</h2>
-          <p className="mt-1 text-[13px] text-muted">Six transformer layers and an 8,000-token vocabulary.</p>
-        </div>
-        <dl className="mx-5 grid grid-cols-2 gap-2.5 sm:mx-6">
-          {stats.map(({ value, label, Icon }) => (
-            <div className="stat" key={label}>
-              <Icon size={16} aria-hidden="true" />
-              <dd>{value}</dd>
-              <dt>{label}</dt>
-            </div>
-          ))}
-        </dl>
-        <div className="sources mx-5 mt-4 flex flex-wrap items-center gap-x-2 gap-y-2 py-3.5 sm:mx-6">
-          <span className="mr-auto text-[12px] font-medium text-muted">Chat training data</span>
-          <a href="https://huggingface.co/datasets/allenai/soda" target="_blank" rel="noreferrer">SODA <ArrowUpRight size={12} /></a>
-          <a href="https://datashare.ed.ac.uk/items/7daabcd9-bb5f-4106-adc3-45e831c5577c" target="_blank" rel="noreferrer">MaiChat <ArrowUpRight size={12} /></a>
-        </div>
-      </section>
-    </aside>
+function PaperPlane() {
+  return (
+    <svg width="21" height="21" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M21.15 2.91a.9.9 0 0 1 1.11 1.17l-6.9 17.4a.87.87 0 0 1-1.58.08l-3.48-5.95 6.47-6.47a.65.65 0 0 0-.92-.92l-6.47 6.47-6.04-3.31a.87.87 0 0 1 .06-1.56l17.75-6.91Z"/>
+    </svg>
+  )
+}
+
+function ModelIntro() {
+  return (
+    <section className="intro min-w-0" aria-labelledby="intro-heading">
+      <p className="eyebrow"><span />A TINY LANGUAGE MODEL</p>
+      <h1 id="intro-heading">Small model.<em>Real conversation.</em></h1>
+      <p className="intro-description">
+        A tiny language model trained from scratch for short, everyday conversations.
+      </p>
+      <p className="runtime"><Cpu size={17} /> Runs in your browser</p>
+    </section>
+  )
+}
+
+function ModelSpecifications() {
+  return (
+    <section className="specs min-w-0" aria-labelledby="specs-heading">
+      <h2 id="specs-heading">Model specifications</h2>
+      <dl className="grid grid-cols-2 gap-2.5 sm:grid-cols-4 lg:grid-cols-2 xl:grid-cols-4">
+        {stats.map(({ value, label, Icon }) => (
+          <div className="stat" key={label}>
+            <Icon size={21} strokeWidth={1.65} aria-hidden="true" />
+            <dt>{label}</dt>
+            <dd>{value}</dd>
+          </div>
+        ))}
+      </dl>
+      <div className="sources mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+        <span className="text-muted">Chat training data</span>
+        <a href="https://huggingface.co/datasets/allenai/soda" target="_blank" rel="noreferrer">SODA <ArrowUpRight size={12} /></a>
+        <a href="https://datashare.ed.ac.uk/items/7daabcd9-bb5f-4106-adc3-45e831c5577c" target="_blank" rel="noreferrer">MaiChat <ArrowUpRight size={12} /></a>
+      </div>
+    </section>
   )
 }
 
 function Chat() {
-  const [turns, setTurns] = useState<Turn[]>([])
+  const [turns, setTurns] = useState<ChatTurn[]>([])
   const [draft, setDraft] = useState('')
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [generating, setGenerating] = useState(false)
   const [issue, setIssue] = useState('')
+  const [notice, setNotice] = useState('')
+  const [menuOpen, setMenuOpen] = useState(false)
   const [attempt, setAttempt] = useState(0)
   const worker = useRef<Worker | null>(null)
   const textarea = useRef<HTMLTextAreaElement>(null)
@@ -85,8 +104,9 @@ function Chat() {
           setStatus('ready')
           break
         case 'reply':
+          const repliedAt = Date.now()
           setTurns((previous) => previous.map((turn, index) =>
-            index === previous.length - 1 ? { ...turn, reply: data.text } : turn
+            index === previous.length - 1 ? { ...turn, reply: data.text, repliedAt: turn.repliedAt ?? repliedAt } : turn
           ))
           break
         case 'done':
@@ -117,10 +137,11 @@ function Chat() {
   function send(text: string) {
     const prompt = text.trim()
     if (status !== 'ready' || generating || !prompt) return
-    const next = [...turns, { prompt, reply: '' }]
+    const next = [...turns, { prompt, reply: '', sentAt: Date.now() }]
     setTurns(next)
     setDraft('')
     setIssue('')
+    setNotice('')
     setGenerating(true)
     post({ type: 'generate', turns: next })
   }
@@ -130,7 +151,22 @@ function Chat() {
     setTurns([])
     setDraft('')
     setIssue('')
+    setNotice('')
+    setMenuOpen(false)
     textarea.current?.focus()
+  }
+
+  async function copyConversation() {
+    const transcript = turns.flatMap(({ prompt, reply }) =>
+      reply ? ['You: ' + prompt, 'TitusAI: ' + reply] : ['You: ' + prompt]
+    ).join('\n\n')
+    setMenuOpen(false)
+    try {
+      await navigator.clipboard.writeText(transcript)
+      setNotice('Conversation copied')
+    } catch {
+      setNotice('Couldn’t copy the conversation')
+    }
   }
 
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -146,32 +182,56 @@ function Chat() {
   }
 
   return (
-    <section className="chat panel flex min-w-0 flex-col overflow-hidden rounded-[24px]" aria-labelledby="chat-heading">
+    <section className="chat flex min-w-0 flex-col overflow-hidden" aria-labelledby="chat-heading">
       <header className="chat-header flex shrink-0 items-center justify-between gap-3 px-5 sm:px-6">
         <div className="flex min-w-0 items-center gap-3">
-          <Mark className="header-mark shrink-0" />
+          <Avatar className="header-avatar" />
           <div>
-            <h2 id="chat-heading" className="text-[18px] font-bold tracking-[-.035em]">Chat with TitusAI</h2>
+            <h2 id="chat-heading" className="text-[17px] font-bold tracking-[-.025em] sm:text-[19px]">Chat with TitusAI</h2>
             <p className="model-status mt-0.5 flex items-center gap-1.5 text-[12px]" role="status">
               <span className={'status-dot ' + status} />
               {status === 'ready' ? 'Model ready' : status === 'loading' ? 'Loading model…' : 'Model unavailable'}
             </p>
           </div>
         </div>
-        <button className="new-chat shrink-0" type="button" onClick={newChat}>
-          <Plus size={16} /> <span>New chat</span>
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <button className="icon-button" type="button" onClick={newChat} aria-label="New chat" title="New chat">
+            <SquarePen size={18} strokeWidth={1.7} />
+          </button>
+          <div className="relative" onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget)) setMenuOpen(false)
+          }} onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              setMenuOpen(false)
+              event.currentTarget.querySelector('button')?.focus()
+            }
+          }}>
+            <button
+              className="icon-button" type="button" aria-label="More chat actions" title="More chat actions"
+              aria-expanded={menuOpen} onClick={() => setMenuOpen(!menuOpen)}
+            >
+              <Ellipsis size={20} />
+            </button>
+            {menuOpen && (
+              <div className="chat-menu">
+                <button type="button" disabled={turns.length === 0} onClick={copyConversation}>
+                  <Copy size={15} /> Copy conversation
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
       </header>
 
       <div ref={log} className="chat-log flex min-h-0 flex-1 flex-col overflow-y-auto" role="log" aria-live="polite">
         {turns.length === 0 ? (
           <div className="empty-chat m-auto flex w-full flex-col items-center px-4 py-6 text-center">
-            <div className="empty-orbit"><Mark /></div>
-            <h3 className="mt-5 text-[31px] font-bold leading-tight tracking-[-.06em]">Say hello.</h3>
+            <div className="avatar-frame"><Avatar className="empty-avatar" /></div>
+            <h3 className="empty-title mt-4">Say hello.</h3>
             {status === 'error' ? (
               <>
                 <p className="mt-2 max-w-70 text-sm text-muted">The browser model couldn’t load. Check the model export and try again.</p>
-                <button className="new-chat mt-4" onClick={() => { setStatus('loading'); setAttempt(attempt + 1) }}>Retry model load</button>
+                <button className="suggestion mt-4" onClick={() => { setStatus('loading'); setAttempt(attempt + 1) }}>Retry model load</button>
               </>
             ) : (
               <>
@@ -187,16 +247,28 @@ function Chat() {
             )}
           </div>
         ) : (
-          <div className="space-y-6 px-5 py-6 sm:px-6">
+          <div className="space-y-5 px-5 py-5 sm:px-6">
             {turns.map((turn, index) => (
-              <div className="space-y-5" key={index}>
-                <div className="flex justify-end"><p className="message user-message">{turn.prompt}</p></div>
+              <div className="space-y-4" key={index}>
+                <div className="flex justify-end">
+                  <div className="message-stack user-stack">
+                    <p className="message user-message">{turn.prompt}</p>
+                    <Timestamp value={turn.sentAt} />
+                  </div>
+                </div>
                 {(turn.reply || (generating && index === turns.length - 1)) && (
                   <div className="flex items-start gap-2.5">
-                    <Mark className="reply-mark shrink-0" />
-                    {turn.reply ? <p className="message model-message">{turn.reply}</p> : (
-                      <div className="typing message model-message" aria-label="TitusAI is typing"><span /><span /><span /></div>
-                    )}
+                    <Avatar className="reply-avatar" />
+                    <div className="message-stack min-w-0">
+                      {turn.reply ? (
+                        <>
+                          <p className="message model-message">{turn.reply}</p>
+                          {turn.repliedAt !== undefined && <Timestamp value={turn.repliedAt} />}
+                        </>
+                      ) : (
+                        <div className="typing message model-message" aria-label="TitusAI is typing"><span /><span /><span /></div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -209,7 +281,7 @@ function Chat() {
       <footer className="chat-footer shrink-0 px-4 pb-4 sm:px-5">
         <form onSubmit={submit} className="composer flex items-end gap-2">
           <textarea
-            ref={textarea} rows={2} aria-label="Message TitusAI" placeholder="Message TitusAI…"
+            ref={textarea} rows={1} aria-label="Message TitusAI" placeholder="Message TitusAI…"
             value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={handleKey}
           />
           {generating ? (
@@ -218,12 +290,12 @@ function Chat() {
             </button>
           ) : (
             <button type="submit" className="send-button" disabled={status !== 'ready' || !draft.trim()} aria-label="Send message">
-              <ArrowUp size={21} strokeWidth={2.2} />
+              <PaperPlane />
             </button>
           )}
         </form>
         <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-0.5 text-[11px] text-muted">
-          <span className="flex items-center gap-1.5"><LockKeyhole size={12} /> Chats stay on this device</span>
+          <span className="flex items-center gap-1.5" aria-live="polite"><LockKeyhole size={12} /> {notice || 'Chats stay on this device'}</span>
           <span className="hidden sm:inline"><kbd>Enter</kbd> to send <span className="mx-1">·</span> <kbd>Shift + Enter</kbd> for new line</span>
         </div>
       </footer>
@@ -233,22 +305,25 @@ function Chat() {
 
 function App() {
   return (
-    <div className="mx-auto max-w-[1336px] px-4 sm:px-7 lg:px-10">
-      <header className="site-header flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2.5">
-          <Mark />
-          <span className="text-[23px] font-extrabold tracking-[-.075em]">Titus<span className="text-brand">AI</span></span>
-        </div>
-        <div className="runtime flex items-center gap-2">
-          <Cpu size={15} aria-hidden="true" />
-          <span>On-device inference</span>
-        </div>
-      </header>
-      <main className="grid items-stretch gap-5 pb-7 pt-5 lg:grid-cols-[minmax(0,.4fr)_minmax(0,.6fr)] lg:gap-6 lg:pt-7">
-        <ModelInfo />
-        <Chat />
-      </main>
-    </div>
+    <>
+      <div className="scenic-background" aria-hidden="true" />
+      <div className="site-shell relative z-10 mx-auto max-w-[1440px] px-4 sm:px-8 lg:px-12">
+        <header className="site-header flex items-center justify-between gap-3">
+          <div className="wordmark flex items-center gap-2.5">
+            <img src={assets + 'titus-mark.svg'} width="44" height="44" alt="" />
+            <span>Titus<span className="text-brand">AI</span></span>
+          </div>
+          <a className="repo-link" href="https://github.com/jaredturck/TitusAI" target="_blank" rel="noreferrer" aria-label="TitusAI on GitHub">
+            <Github size={18} /> <span>GitHub</span> <ArrowUpRight size={13} />
+          </a>
+        </header>
+        <main className="workspace">
+          <ModelIntro />
+          <Chat />
+          <ModelSpecifications />
+        </main>
+      </div>
+    </>
   )
 }
 

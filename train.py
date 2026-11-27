@@ -1,12 +1,9 @@
-import argparse
-import json
-import os
-import sqlite3
+import argparse, json, os, sqlite3, torch
 from contextlib import closing
 from time import monotonic
 
-import torch
 import torch.distributed as dist
+from torch.nn.attention import SDPBackend, sdpa_kernel
 from torch.nn.functional import cross_entropy
 from torch.nn.parallel import DistributedDataParallel
 from torch.nn.utils.rnn import pad_sequence
@@ -39,6 +36,7 @@ class TokenWindows(Dataset):
         '''Gather 513 tokens from each starting position.'''
         return self.tokens[torch.as_tensor(starts)[..., None] + self.offsets]
 
+@sdpa_kernel(SDPBackend.FLASH_ATTENTION)
 def train():
     '''Pretrain TitusAI and then fine-tune it on assistant replies.'''
     device = torch.device("cuda", int(os.environ["LOCAL_RANK"]))

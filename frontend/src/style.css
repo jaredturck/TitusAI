@@ -1,0 +1,220 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "DM Sans Variable", sans-serif;
+  --font-mono: "IBM Plex Mono", monospace;
+  --color-brand: #80dbae;
+  --color-ink: #edf4ee;
+  --color-muted: #a1b5a8;
+}
+
+html {
+  color: var(--color-ink);
+  color-scheme: dark;
+  background: #0d1410;
+  font-family: var(--font-sans);
+}
+
+body {
+  min-width: 300px;
+  min-height: 100vh;
+  background: radial-gradient(ellipse at 8% 0%, #182a20 0%, transparent 45%);
+}
+
+button:not(:disabled), a { cursor: pointer; }
+:focus-visible { outline: 2px solid #70cba0; outline-offset: 3px; }
+::selection { background: #99dfb8; color: #10281d; }
+
+.site-header { height: 75px; border-bottom: 1px solid #29392f; }
+
+.mark {
+  display: inline-grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 11px;
+  border: 1px solid #3c6952;
+  background: #214737;
+  color: #9ff0c5;
+}
+.mark svg { transform: rotate(15deg); }
+.runtime {
+  border: 1px solid #2d4938;
+  border-radius: 999px;
+  padding: 7px 12px;
+  background: #17271e;
+  color: #b7d8c3;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.hero {
+  min-height: 345px;
+  background: #07281d;
+  color: #f5fff7;
+  box-shadow: 0 12px 28px #0005;
+}
+.hero-art {
+  position: absolute;
+  z-index: -2;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 18%;
+}
+.hero::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(145deg, #051f17c0, #06251c60 55%, transparent 86%);
+}
+.hero-copy { padding: 30px 26px; }
+.eyebrow {
+  color: #a8e8c5;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .13em;
+}
+.hero-pip { width: 6px; height: 6px; border-radius: 50%; background: #85efb9; box-shadow: 0 0 12px #85efb9; }
+.hero h1 {
+  font-size: clamp(33px, 4vw, 56px);
+  font-weight: 730;
+  line-height: 1.01;
+  letter-spacing: -.076em;
+}
+.hero h1 em { color: #a8efc9; font-style: normal; }
+.hero-description { max-width: 275px; color: #d4e8db; font-size: 14px; line-height: 1.55; }
+
+.panel {
+  border: 1px solid #2c3c32;
+  background: #151f1a;
+  box-shadow: 0 4px 24px #0003;
+}
+.stat {
+  position: relative;
+  min-width: 0;
+  border: 1px solid #304138;
+  border-radius: 13px;
+  padding: 11px 13px;
+  background: #1c2a22;
+}
+.stat svg { position: absolute; top: 13px; right: 12px; color: #7ab799; }
+.stat dd { font-size: 26px; font-weight: 750; line-height: 1.17; letter-spacing: -.07em; }
+.stat dt { margin-top: 3px; color: var(--color-muted); font-size: 11.5px; font-weight: 550; }
+.sources { border-top: 1px solid #2d3d33; }
+.sources a, .new-chat, .suggestion {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid #344d3e;
+  background: #192820;
+  color: #c8e1d1;
+  font-weight: 650;
+  transition: background .16s, border-color .16s;
+}
+.sources a { border-radius: 7px; padding: 4px 7px; font-size: 11px; text-decoration: none; }
+.sources a:hover, .new-chat:hover, .suggestion:not(:disabled):hover { background: #243c2f; border-color: #548365; }
+
+.chat { height: 100%; min-height: 630px; }
+.chat-header { height: 75px; border-bottom: 1px solid #2d3d33; }
+.header-mark { width: 40px; height: 40px; color: #a1e8bd; background: #223d2e; }
+.model-status { color: var(--color-muted); }
+.status-dot { width: 6px; height: 6px; border-radius: 50%; background: #789386; }
+.status-dot.ready { background: #65d69b; box-shadow: 0 0 8px #65d69b50; }
+.status-dot.loading { background: #d0a15a; animation: pulse 1.4s infinite alternate; }
+.status-dot.error { background: #ef918a; }
+.new-chat { border-radius: 9px; padding: 7px 10px; font-size: 12px; }
+.chat-log { max-height: 510px; overscroll-behavior: contain; }
+
+.empty-orbit {
+  display: grid;
+  width: 88px;
+  height: 88px;
+  place-items: center;
+  border: 1px solid #345344;
+  border-radius: 50%;
+  background: radial-gradient(circle, #213b2c 0 55%, #192c22 56%);
+}
+.empty-orbit .mark {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  box-shadow: 0 4px 16px #071a11aa;
+}
+.suggestion { padding: 8px 10px; border-radius: 8px; font-size: 11.5px; }
+.suggestion svg { color: #86c9a8; }
+.suggestion:disabled { opacity: .58; }
+.message {
+  max-width: min(82%, 475px);
+  overflow-wrap: anywhere;
+  border-radius: 15px;
+  padding: 10px 13px;
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.user-message { background: #26563f; color: #effbf3; border-bottom-right-radius: 5px; }
+.model-message { background: #223129; color: var(--color-ink); border-top-left-radius: 5px; }
+.reply-mark { width: 30px; height: 30px; border-radius: 9px; color: #a1e8bd; background: #223d2e; }
+.typing { display: flex; align-items: center; gap: 4px; min-height: 39px; }
+.typing span { width: 5px; height: 5px; border-radius: 50%; background: #82ba9d; animation: pulse .8s infinite alternate; }
+.typing span:nth-child(2) { animation-delay: .16s; }
+.typing span:nth-child(3) { animation-delay: .32s; }
+@keyframes pulse { from { opacity: .4; } to { opacity: 1; } }
+.chat-footer { padding-top: 11px; background: #151f1a; }
+.composer {
+  border: 1px solid #3d594a;
+  border-radius: 13px;
+  padding: 8px;
+  background: #1a2820;
+  transition: border-color .16s, box-shadow .16s;
+}
+.composer:focus-within { border-color: #80c7a3; box-shadow: 0 0 0 3px #284a38; }
+.composer textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  align-self: stretch;
+  resize: none;
+  padding: 7px 8px;
+  outline: none;
+  font-size: 14px;
+}
+.composer textarea::placeholder { color: #a0b5a6; }
+.send-button {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  place-items: center;
+  border-radius: 9px;
+  background: #8be2b3;
+  color: #102b1d;
+}
+.send-button:hover:not(:disabled) { background: #b0f0cc; }
+.send-button:disabled { background: #2b4537; color: #a2bfac; }
+kbd { color: #c0d6c8; font-family: var(--font-sans); font-weight: 700; }
+
+@media (min-width: 640px) {
+  .hero-copy { padding: 32px 30px; }
+}
+
+@media (min-width: 1024px) {
+  .chat { min-height: 650px; }
+  .chat-log { max-height: 468px; }
+}
+
+@media (max-width: 639px) {
+  .site-header { height: 62px; }
+  .hero { min-height: 285px; }
+  .hero h1 { font-size: clamp(33px, 10.4vw, 52px); }
+  .hero-copy { padding-top: 25px; }
+  .chat { height: 580px; min-height: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}

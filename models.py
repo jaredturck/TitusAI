@@ -18,12 +18,13 @@ class TitusAI(nn.Module):
         )
 
         self.output = nn.Linear(384, vocab_size)
-        self.register_buffer("causal_mask", nn.Transformer.generate_square_subsequent_mask(512), persistent=False,)
+        self.register_buffer("causal_mask", nn.Transformer.generate_square_subsequent_mask(512), persistent=False)
+        self.register_buffer("position_ids", torch.arange(512), persistent=False)
 
     def forward(self, input_ids):
         '''Return vocabulary logits at each position in the input batch.'''
         sequence_length = input_ids.size(1)
-        positions = torch.arange(sequence_length, device=input_ids.device)
+        positions = self.position_ids[:sequence_length]
         hidden = self.token_embedding(input_ids) + self.position_embedding(positions)
         hidden = self.transformer(
             hidden,

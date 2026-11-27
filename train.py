@@ -1,4 +1,4 @@
-import argparse, json, os, sqlite3, torch
+import json, os, sqlite3, torch
 from contextlib import closing
 from time import monotonic
 
@@ -39,32 +39,31 @@ class TokenWindows(Dataset):
 @sdpa_kernel(SDPBackend.FLASH_ATTENTION)
 def train():
     '''Pretrain TitusAI and then fine-tune it on assistant replies.'''
-    device = torch.device("cuda", int(os.environ["LOCAL_RANK"]))
+    rank = int(os.environ["LOCAL_RANK"])
+    device = torch.device("cuda", rank)
     torch.cuda.set_device(device)
     dist.init_process_group("nccl", device_id=device)
-    rank = dist.get_rank()
 
     dataset = TokenWindows()
-    samples_per_gpu = (dataset.tokens.numel() - 1) // (WINDOW_LENGTH * dist.get_world_size())
+    samples_per_gpu = (dataset.tokens.numel() - 1) // (WINDOW_LENGTH * 2)
     sampler = RandomSampler(dataset, replacement=True, num_samples=samples_per_gpu)
     batch_sampler = BatchSampler(sampler, batch_size=180, drop_last=False)
     batches = DataLoader(dataset, batch_size=None, sampler=batch_sampler, pin_memory=True)
 
     model = TitusAI().to(device=device, dtype=torch.bfloat16)
-    if os.path.isfile("model.pt"):
+    if rank == 0 and os.path.isfile("model.pt"):
         model.load_state_dict(torch.load("model.pt", map_location="cpu"))
-    model = DistributedDataParallel(model, device_ids=[device.index])
+    model = DistributedDataParallel(model, device_ids=[rank], forward_sync_buffers=False)
     optimizer = AdamW(model.parameters(), lr=3e-4, fused=True)
 
     progress = tqdm(batches, desc="Pretraining", unit="batch", disable=rank != 0)
     last_report = monotonic()
     for windows in progress:
         windows = windows.to(device=device, dtype=torch.long, non_blocking=True)
-        optimizer.zero_grad(set_to_none=True)
+        optimizer.zero_grad()
 
-        logits = model(windows[:, :-1])
         targets = windows[:, 1:].reshape(-1)
-        loss = cross_entropy(logits.flatten(0, 1).float(), targets)
+        loss = cross_entropy(model(windows[:, :-1]).flatten(0, 1).float(), targets)
 
         loss.backward()
         optimizer.step()
@@ -78,7 +77,7 @@ def train():
 
     del dataset, sampler, batch_sampler, batches, progress
     dataset = ChatDataset()
-    sampler = DistributedSampler(dataset)
+    sampler = DistributedSampler(dataset, num_replicas=2, rank=rank)
     batches = DataLoader(dataset, batch_size=32, sampler=sampler, pin_memory=True, collate_fn=pad_chat_batch)
     optimizer = AdamW(model.parameters(), lr=1e-4, fused=True)
 
@@ -89,8 +88,7 @@ def train():
         targets = targets.to(device=device, dtype=torch.long, non_blocking=True)
         optimizer.zero_grad()
 
-        logits = model(inputs)
-        loss = cross_entropy(logits.flatten(0, 1).float(), targets.flatten())
+        loss = cross_entropy(model(inputs).flatten(0, 1).float(), targets.flatten())
         loss.backward()
         optimizer.step()
 
@@ -132,5 +130,4 @@ def pad_chat_batch(examples):
     return pad_sequence(inputs, batch_first=True, padding_value=3), pad_sequence(targets, batch_first=True, padding_value=-100)
 
 if __name__ == "__main__":
-    argparse.ArgumentParser().parse_args()
     train()

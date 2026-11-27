@@ -30,3 +30,9 @@ The browser loads `frontend/public/model/titusai.onnx` and `frontend/public/mode
 3. Copy it to `frontend/public/model/titusai.onnx` and keep the matching tokenizer at `frontend/public/model/tokenizer.model`.
 
 The current website uses an INT8 export. `frontend/export_model.py` uses INT8 today, so prepare the 4-bit export when the next release is requested.
+
+### GitHub Pages
+
+Changes to the frontend on `main` trigger a build. To publish the website, select **GitHub Actions** as the repository's Pages source and run **Deploy to GitHub Pages** from `main` in the Actions tab.
+
+The workflow builds the website from Git. Browser chat requires the model and tokenizer from a separate release.
